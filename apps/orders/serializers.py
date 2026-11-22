@@ -43,7 +43,6 @@ class OrderCreateSerializer(serializers.Serializer):
     delivery_slot = serializers.IntegerField(min_value=1)
     delivery_date = serializers.DateField()
     card_message = serializers.CharField(max_length=300, required=False, allow_blank=True, default="")
-    mpesa_phone = serializers.CharField(max_length=20)
 
     CAMEL = {
         "recipientName": "recipient_name",
@@ -53,7 +52,6 @@ class OrderCreateSerializer(serializers.Serializer):
         "deliverySlot": "delivery_slot",
         "deliveryDate": "delivery_date",
         "cardMessage": "card_message",
-        "mpesaPhone": "mpesa_phone",
     }
 
     def to_internal_value(self, data):
@@ -78,8 +76,6 @@ class OrderCreateSerializer(serializers.Serializer):
     def validate_recipient_phone(self, value):
         return _phone(value)
 
-    def validate_mpesa_phone(self, value):
-        return _phone(value)
 
     def validate_delivery_address(self, value):
         value = value.strip()
@@ -125,7 +121,6 @@ class OrderSerializer(serializers.ModelSerializer):
     createdAt = serializers.DateTimeField(source="created_at")
     expiresAt = serializers.DateTimeField(source="expires_at")
     paidAt = serializers.DateTimeField(source="paid_at")
-    payment = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
@@ -144,7 +139,6 @@ class OrderSerializer(serializers.ModelSerializer):
             "createdAt",
             "expiresAt",
             "paidAt",
-            "payment",
         ]
 
     def get_recipient(self, obj):
@@ -159,29 +153,14 @@ class OrderSerializer(serializers.ModelSerializer):
             "slot": obj.delivery_slot_label,
         }
 
-    def get_payment(self, obj):
-        payments = list(obj.payments.all())  # ordered newest first
-        if not payments:
-            return None
-        paid = next((p for p in payments if p.status == "paid"), None)
-        p = paid or payments[0]
-        return {
-            "id": str(p.id),
-            "status": p.status,
-            "failureReason": p.failure_reason,
-            "receipt": p.mpesa_receipt if p.status == "paid" else "",
-            "amountKes": p.amount_kes,
-            "updatedAt": p.updated_at,
-        }
 
 
 class StaffOrderSerializer(OrderSerializer):
     customer = serializers.SerializerMethodField()
     events = OrderEventSerializer(many=True, read_only=True)
-    mpesaPhone = serializers.CharField(source="mpesa_phone")
 
     class Meta(OrderSerializer.Meta):
-        fields = OrderSerializer.Meta.fields + ["customer", "events", "mpesaPhone"]
+        fields = OrderSerializer.Meta.fields + ["customer", "events"]
 
     def get_customer(self, obj):
         return {"id": obj.customer_id, "name": obj.customer.name, "phone": obj.customer.phone}

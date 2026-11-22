@@ -39,7 +39,6 @@ class Order(models.Model):
     delivery_date = models.DateField()
     delivery_slot_label = models.CharField(max_length=60)
     card_message = models.CharField(max_length=300, blank=True)
-    mpesa_phone = models.CharField(max_length=15)
 
     subtotal_kes = models.PositiveIntegerField()
     delivery_fee_kes = models.PositiveIntegerField()

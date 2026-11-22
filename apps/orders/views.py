@@ -35,7 +35,7 @@ def get_idempotency_key(request) -> str:
 
 
 def order_queryset():
-    return Order.objects.select_related("customer").prefetch_related("items", "payments", "events")
+    return Order.objects.select_related("customer").prefetch_related("items", "events")
 
 
 class OrderCreateView(APIView):
@@ -64,12 +64,6 @@ class OrderDetailView(APIView):
         if not request.user.is_staff:
             qs = qs.filter(customer=request.user)  # others get 404, not 403: no existence leak
         order = get_object_or_404(qs, pk=order_id)
-
-        # If a payment has been pending a while, ask Safaricom instead of waiting for a callback.
-        from apps.payments.services import maybe_reconcile
-
-        if maybe_reconcile(order):
-            order = get_object_or_404(order_queryset(), pk=order_id)
 
         serializer = StaffOrderSerializer if request.user.is_staff else OrderSerializer
         return Response(serializer(order).data)
@@ -136,21 +130,14 @@ class StaffOrderStatusView(APIView):
 
         with transaction.atomic():
             order = Order.objects.select_for_update().get(pk=get_object_or_404(Order, pk=order_id).pk)
-            # Staff can never mark an unpaid order as fulfilled, and payment is
-            # only ever recorded by the verified M-Pesa flow.
-            if order.status == Order.Status.PENDING_PAYMENT and new_status != Order.Status.CANCELLED:
-                raise ApiError(
-                    "PAYMENT_REQUIRED",
-                    "This order has not been paid. It can only be cancelled.",
-                    status.HTTP_409_CONFLICT,
+            # Pending orders can only be confirmed (payment received) or cancelled: the state
+            # machine rejects anything else, so an unpaid order can never be fulfilled.
+            if new_status == Order.Status.CONFIRMED and order.status == Order.Status.PENDING_PAYMENT:
+                note = serializer.validated_data["note"] or "Payment confirmed manually by staff"
+                services.confirm_order_payment(order.pk, actor=request.user, note=note)
+                order.refresh_from_db()
+            else:
+                services.transition_order(
+                    order, new_status, actor=request.user, note=serializer.validated_data["note"]
                 )
-            if new_status == Order.Status.CONFIRMED:
-                raise ApiError(
-                    "PAYMENT_REQUIRED",
-                    "Orders are confirmed automatically when M-Pesa payment is verified.",
-                    status.HTTP_409_CONFLICT,
-                )
-            services.transition_order(
-                order, new_status, actor=request.user, note=serializer.validated_data["note"]
-            )
         return Response(StaffOrderSerializer(order_queryset().get(pk=order.pk)).data)

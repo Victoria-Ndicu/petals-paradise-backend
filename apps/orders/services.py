@@ -14,7 +14,7 @@ from rest_framework import status
 
 from apps.catalogue.models import BlockedDate, DeliveryOption, DeliverySlot, Product, ProductPresentation, ProductVariant
 from apps.core.exceptions import ApiError
-from apps.core.models import record_audit
+from apps.core.models import Notification, enqueue_notification, record_audit
 
 from .models import Order, OrderItem, OrderStatusEvent
 
@@ -90,20 +90,58 @@ def release_stock(order: Order) -> None:
 
 
 def cancel_unpaid_order(order_id, *, actor=None, note="cancelled") -> bool:
-    """Cancel an order only if it is still unpaid. Returns True if cancelled."""
-    from apps.payments.models import Payment
-
+    """Cancel an order only if it is still awaiting payment. Returns True if cancelled."""
     with transaction.atomic():
         order = Order.objects.select_for_update().get(pk=order_id)
         if order.status != Order.Status.PENDING_PAYMENT:
             return False
-        if order.payments.filter(status=Payment.Status.PAID).exists():
-            return False
         transition_order(order, Order.Status.CANCELLED, actor=actor, note=note)
-        order.payments.filter(status=Payment.Status.PENDING).update(
-            status=Payment.Status.CANCELLED, failure_reason="order_cancelled"
-        )
         return True
+
+
+def confirm_order_payment(order_id, *, actor=None, note: str = "Payment confirmed") -> str:
+    """Single entry point for "this order has been paid".
+
+    Used today by staff (manual confirmation) and intended to be the integration point for the
+    separate payments service. Idempotent. Returns:
+      "confirmed"   - the order moved from pending_payment to confirmed now
+      "already"     - it was already confirmed or further along; nothing changed
+      "cancelled"   - the order had been cancelled; the caller must handle the money (refund/review)
+    """
+    with transaction.atomic():
+        order = Order.objects.select_for_update().select_related("customer").get(pk=order_id)
+        if order.status == Order.Status.CANCELLED:
+            return "cancelled"
+        if order.status != Order.Status.PENDING_PAYMENT:
+            return "already"
+        transition_order(order, Order.Status.CONFIRMED, actor=actor, note=note)
+        customer = order.customer
+        for channel in (Notification.Channel.SMS, Notification.Channel.WHATSAPP):
+            enqueue_notification(
+                channel=channel,
+                kind="order_confirmed",
+                recipient=customer.phone,
+                related_type="order",
+                related_id=order.pk,
+            )
+        if customer.email:
+            enqueue_notification(
+                channel=Notification.Channel.EMAIL,
+                kind="order_confirmed",
+                recipient=customer.email,
+                related_type="order",
+                related_id=order.pk,
+            )
+        return "confirmed"
+
+
+def expire_stale_orders() -> int:
+    """Cancel orders still awaiting payment past their deadline and release their stock."""
+    cancelled = 0
+    for order in Order.objects.filter(status=Order.Status.PENDING_PAYMENT, expires_at__lte=timezone.now()):
+        if cancel_unpaid_order(order.pk, note="payment timeout"):
+            cancelled += 1
+    return cancelled
 
 
 # --------------------------------------------------------------- order creation
@@ -156,7 +194,6 @@ def create_order(*, customer, data: dict, idempotency_key: str) -> tuple[Order, 
             "rname": data["recipient_name"],
             "rphone": data["recipient_phone"],
             "card": data.get("card_message", ""),
-            "mpesa": data["mpesa_phone"],
         }
     )
 
@@ -268,7 +305,6 @@ def _build_order(customer, data, area, slot, idempotency_key, fp) -> Order:
         delivery_date=data["delivery_date"],
         delivery_slot_label=slot.label,
         card_message=data.get("card_message", ""),
-        mpesa_phone=data["mpesa_phone"],
         subtotal_kes=subtotal,
         delivery_fee_kes=area.fee_kes,
         total_kes=total,

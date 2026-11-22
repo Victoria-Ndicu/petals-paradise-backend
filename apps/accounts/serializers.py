@@ -18,11 +18,17 @@ def _clean_phone(value: str) -> str:
 class ProfileSerializer(serializers.ModelSerializer):
     phone = serializers.CharField(max_length=20)
     email = serializers.EmailField(required=False, allow_blank=True, allow_null=True)
+    socialProviders = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ["id", "name", "phone", "email", "default_delivery_area", "default_address"]
-        read_only_fields = ["id"]
+        fields = ["id", "name", "phone", "email", "default_delivery_area", "default_address", "socialProviders"]
+        read_only_fields = ["id", "socialProviders"]
+
+    def get_socialProviders(self, obj):
+        if not obj.pk:
+            return []
+        return sorted(obj.social_accounts.values_list("provider", flat=True))
 
     def validate_name(self, value):
         value = value.strip()
@@ -84,3 +90,17 @@ class SignupSerializer(ProfileSerializer):
 class LoginSerializer(serializers.Serializer):
     identifier = serializers.CharField(max_length=254)
     password = serializers.CharField(max_length=128, trim_whitespace=False)
+
+
+class SocialLoginSerializer(serializers.Serializer):
+    idToken = serializers.CharField(max_length=8192, trim_whitespace=True)
+    nonce = serializers.CharField(max_length=256, required=False, allow_blank=True)
+    # Apple only sends the user's name to the browser (not in the token), so the SPA passes it on.
+    name = serializers.CharField(max_length=120, required=False, allow_blank=True)
+    # Required the first time someone signs up (phone is our unique customer key).
+    phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
+
+
+class SocialLinkSerializer(serializers.Serializer):
+    idToken = serializers.CharField(max_length=8192, trim_whitespace=True)
+    nonce = serializers.CharField(max_length=256, required=False, allow_blank=True)

@@ -1,8 +1,12 @@
 # Petals Paradise backend (Django + DRF, deployed on Render)
 
 Implements Phase 1 of the backend requirements: catalogue and delivery APIs, secure
-customer accounts, server-priced orders, M-Pesa (Daraja STK Push) payments with verified
-callbacks, customer inquiries, and a staff back office (Django admin + staff API).
+customer accounts (password + Google/Apple), server-priced orders, customer inquiries, and a
+staff back office (Django admin + staff API).
+
+**Payments are not part of this repo.** They will live in a separate repository/service. Until
+then orders are created as `pending_payment` and staff confirm them manually (see "Payments
+integration seam" below).
 
 ## Run locally
 
@@ -23,12 +27,10 @@ DEBUG=true python manage.py test tests
 2. Render dashboard > **New > Blueprint**, pick the repo. `render.yaml` creates:
    - `petals-api` web service (gunicorn, health check `/healthz`)
    - `petals-db` managed PostgreSQL (Frankfurt, the closest Render region to Kenya)
-   - `petals-payment-sweeper` cron job (every 5 minutes: resolves payments whose callback
-     never arrived, cancels unpaid orders, releases reserved stock)
-3. Fill in the prompted secrets: `MPESA_CONSUMER_KEY`, `MPESA_CONSUMER_SECRET`,
-   `MPESA_SHORTCODE`, `MPESA_PASSKEY`, `MPESA_CALLBACK_BASE_URL`
-   (your public API URL, e.g. `https://api.petalsparadise.co.ke`),
-   `CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS` (your storefront origin).
+   - `petals-order-sweeper` cron job (every 5 minutes: cancels orders still awaiting payment
+     past their deadline and releases reserved stock)
+3. Fill in the prompted values: `CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS` (your
+   storefront origin), and `GOOGLE_CLIENT_IDS` / `APPLE_CLIENT_IDS` if you want social sign-in.
 4. Create the first staff user: Render dashboard > `petals-api` > **Shell**, then
    `python manage.py createsuperuser`. Staff log in at `/admin/`.
 5. Check plan names and prices in `render.yaml` against Render's current pricing. Do not use
@@ -46,8 +48,7 @@ service in Render.
 | Products, variants/prices, presentations, availability, publish/unpublish/retire | `/admin/` > Catalogue |
 | Delivery areas, fees, time slots, blocked dates | `/admin/` > Catalogue |
 | Inquiries (status, assignment) | `/admin/` > Inquiries, or `/api/v1/admin/inquiries` |
-| Order lookup and fulfilment status | `/api/v1/admin/orders`, `POST .../status` (admin shows orders read-only so every change goes through the state machine and audit trail) |
-| Payments needing review (`needs_review`) | `/admin/` > Payments |
+| Order lookup, manual payment confirmation and fulfilment status | `/api/v1/admin/orders`, `POST .../status` (admin shows orders read-only so every change goes through the state machine and audit trail) |
 | Audit trail (append-only) | `/admin/` > Audit events |
 
 Staff are created only in the admin or with `createsuperuser`; public sign-up can never set staff flags.
@@ -55,10 +56,10 @@ Staff are created only in the admin or with `createsuperuser`; public sign-up ca
 ## API (all under `/api/v1`, errors use `{"error": {"code", "message", "fields"}}`)
 
 Public: `GET products` (`?category=&search=&ordering=name|price|-price`), `GET products/{id}`,
-`GET delivery-options`, `POST inquiries`, `GET auth/csrf`, `POST auth/signup`, `POST auth/login`.
-Customer: `POST auth/logout`, `GET/PATCH me`, `POST orders`, `GET orders/{id}`,
-`POST orders/{id}/cancel`, `GET me/orders`, `POST orders/{id}/payments/mpesa`.
-Provider: `POST webhooks/mpesa/{secret}`. Staff: `admin/orders`, `admin/orders/{id}`,
+`GET delivery-options`, `POST inquiries`, `GET auth/csrf`, `POST auth/signup`, `POST auth/login`,
+`POST auth/social/google`, `POST auth/social/apple`.
+Customer: `POST auth/logout`, `POST auth/social/{provider}/link`, `GET/PATCH me`, `POST orders`, `GET orders/{id}`,
+`POST orders/{id}/cancel`, `GET me/orders`. Staff: `admin/orders`, `admin/orders/{id}`,
 `admin/orders/{id}/status`, `admin/inquiries`, `admin/inquiries/{id}`.
 
 ### What the frontend must do
@@ -66,28 +67,64 @@ Provider: `POST webhooks/mpesa/{secret}`. Staff: `admin/orders`, `admin/orders/{
 - Call `GET /auth/csrf` once, then send the `csrftoken` cookie value in an `X-CSRFToken`
   header on every POST/PATCH, with `credentials: "include"`.
 - Send an `Idempotency-Key` header (a UUID created once per checkout attempt) on `POST /orders`
-  and `POST /orders/{id}/payments/mpesa`. Reuse the same key when retrying after a timeout.
+  Reuse the same key when retrying after a timeout.
 - Send only ids and quantities in the cart (`productId`, `variantId`, `presentationId`,
   `quantity`). Prices and totals in the response come from the server; anything the browser
   sends for money is ignored.
-- After starting payment, poll `GET /orders/{id}` until `payment.status` is `paid`, `failed`
-  or `cancelled`. Treat only `paid` (with `order.status = confirmed`) as success.
+- A new order has `status = pending_payment`. Treat an order as paid only when
+  `status = confirmed` (or later). Poll `GET /orders/{id}` to see it change.
 - Product `id` is the slug. Variant `id` is numeric. Stock is reported as
   `made_to_order | in_stock | out_of_stock`, never as a fabricated count.
 
-## M-Pesa safety rules built in
+## Payments integration seam
 
-- The amount sent to Safaricom is always the server-computed order total.
-- A payment is marked `paid` only when a success callback matches a payment we created,
-  the amount matches, and an STK status query confirms it. Duplicate, delayed or replayed
-  callbacks cannot create a second transition.
-- If the callback never arrives, the status poll or cron job resolves it from the status query.
-- A success that arrives after we timed out or cancelled the order is still recorded and
-  flagged `needs_review` so the customer can be refunded; it is never dropped.
-- The callback URL contains a secret path segment (`MPESA_CALLBACK_SECRET`). Daraja does not
-  sign callbacks, so this plus the status-query check is the defence. Safaricom IP allow-listing
-  can be added at a proxy if you want a further layer.
-- Credentials live only in environment variables and are never logged or returned.
+Payment code (M-Pesa/Daraja) was removed from this repo on purpose. What remains is
+payment-agnostic:
+
+- Orders start as `pending_payment` and carry `totalKes` (server-computed) and `reference`.
+- `apps.orders.services.confirm_order_payment(order_id, actor=None, note=...)` is the single
+  function that means "this order is paid". It is idempotent, moves the order to `confirmed`,
+  and queues the confirmation notifications. It returns `"confirmed"`, `"already"` or
+  `"cancelled"` (the order was cancelled first: the payments service must handle the refund).
+  Staff use it today via `POST /api/v1/admin/orders/{id}/status {"status": "confirmed"}`.
+- Orders still awaiting payment are cancelled and their reserved stock released after
+  `PAYMENT_TIMEOUT_MINUTES` (default 1440 = 24h, because staff confirm manually for now).
+  Shorten it when online payment is connected.
+- Customers cannot confirm their own orders, and staff cannot fulfil an unpaid order.
+
+When the payments repo is ready, decide whether it runs as its own service (calls a
+server-to-server endpoint you add here) or is added back as a Django app that calls
+`confirm_order_payment`. The order's payer phone is no longer collected at order time; the
+payment step should ask for it.
+
+## Sign in with Google / Apple
+
+Flow: the browser gets an **ID token** from Google Identity Services / Sign in with Apple and
+posts it to the backend, which verifies signature, issuer, audience and expiry against the
+provider's public keys before creating the session cookie. Nothing the browser says about who
+the user is is trusted.
+
+```
+POST /api/v1/auth/social/google   {"idToken": "...", "nonce": "...", "phone": "0712345678"}
+POST /api/v1/auth/social/apple    {"idToken": "...", "name": "Jane Doe", "phone": "0712345678"}
+```
+
+- Returning user -> `200` and a session. New user -> needs `phone` (our unique customer key):
+  without it the API answers `400 PHONE_REQUIRED`, so the SPA should show a phone field and
+  re-send the same token with `phone`. Success is `201`.
+- Apple only gives the name to the browser (not in the token), so pass it as `name`.
+- `nonce` is optional but recommended: send the same value you gave the provider.
+- Email already used by a password account -> `409 ACCOUNT_EXISTS`. We never auto-link on
+  email (emails are unverified, so that would allow account pre-hijacking). The customer signs
+  in with their password and calls `POST auth/social/{provider}/link` with a fresh token.
+- Social-only accounts have no usable password. `GET me` returns `socialProviders`.
+- Disabled until configured: set `GOOGLE_CLIENT_IDS` (Web client ID from Google Cloud Console >
+  APIs & Services > Credentials, with your storefront as an authorised JavaScript origin) and/or
+  `APPLE_CLIENT_IDS` (Services ID from Apple Developer > Identifiers, with your domain and
+  return URL registered). Unset -> `503 PROVIDER_NOT_CONFIGURED`.
+- Apple "Hide My Email" addresses (`@privaterelay.appleid.com`) are stored as the email as given.
+- Not built: unlinking a provider and setting a password on a social-only account (needs the
+  password-reset policy first, so users can't lock themselves out).
 
 ## Known gaps / decisions still needed (from the requirements, Phase 0)
 
@@ -97,7 +134,6 @@ Provider: `POST webhooks/mpesa/{secret}`. Staff: `admin/orders`, `admin/orders/{
   implies an account is verified.
 - Notifications are recorded as `queued` and are never marked `sent`: no SMS/WhatsApp/email
   provider is connected yet (Phase 2).
-- Refund handling is flagged (`needs_review`) but not automated.
-- Guest checkout and social login are intentionally out of scope.
-- Verified end to end only with mocked Daraja responses (75 automated tests). Run the sandbox
-  scenarios from section 4.5 of the requirements against the real Daraja sandbox before production.
+- No online payments yet and no refund handling (separate payments repo).
+- Guest checkout is intentionally out of scope.
+- 71 automated tests run on SQLite. Run them against Postgres in CI before launch.

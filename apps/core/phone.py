@@ -1,7 +1,7 @@
 """Kenyan phone number normalization.
 
 All phone numbers are stored in international form without a plus sign
-(e.g. 254712345678), which is also the format Daraja expects.
+(e.g. 254712345678).
 """
 import re
 

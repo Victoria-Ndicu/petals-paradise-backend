@@ -53,7 +53,6 @@ INSTALLED_APPS = [
     "apps.accounts",
     "apps.catalogue",
     "apps.orders",
-    "apps.payments",
     "apps.inquiries",
 ]
 
@@ -134,6 +133,12 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
+# Social sign-in: OAuth client IDs the ID token must have been issued for (comma separated).
+# Google: the Web client ID(s) from Google Cloud Console. Apple: the Services ID (web)
+# and/or app bundle ID (iOS). Leave empty to disable that provider.
+GOOGLE_CLIENT_IDS = env_list("GOOGLE_CLIENT_IDS")
+APPLE_CLIENT_IDS = env_list("APPLE_CLIENT_IDS")
+
 # --- Sessions / cookies ---------------------------------------------------
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 14  # 14 days
@@ -187,7 +192,6 @@ REST_FRAMEWORK = {
         "signup": os.environ.get("THROTTLE_SIGNUP", "10/hour"),
         "inquiry": os.environ.get("THROTTLE_INQUIRY", "5/hour"),
         "order_create": os.environ.get("THROTTLE_ORDER_CREATE", "20/hour"),
-        "payment_init": os.environ.get("THROTTLE_PAYMENT_INIT", "20/hour"),
     },
 }
 
@@ -197,22 +201,10 @@ CURRENCY = "KES"
 # Minimum lead time between "now" and the start of a delivery slot.
 MIN_DELIVERY_LEAD_HOURS = int(os.environ.get("MIN_DELIVERY_LEAD_HOURS", "3"))
 MAX_DELIVERY_DAYS_AHEAD = int(os.environ.get("MAX_DELIVERY_DAYS_AHEAD", "90"))
-# Unpaid orders are cancelled after this long.
-PAYMENT_TIMEOUT_MINUTES = int(os.environ.get("PAYMENT_TIMEOUT_MINUTES", "15"))
-
-# --- M-Pesa (Safaricom Daraja) -------------------------------------------
-MPESA_ENV = os.environ.get("MPESA_ENV", "sandbox")  # sandbox | production
-MPESA_CONSUMER_KEY = os.environ.get("MPESA_CONSUMER_KEY", "")
-MPESA_CONSUMER_SECRET = os.environ.get("MPESA_CONSUMER_SECRET", "")
-MPESA_SHORTCODE = os.environ.get("MPESA_SHORTCODE", "174379")
-MPESA_PASSKEY = os.environ.get("MPESA_PASSKEY", "")
-MPESA_TRANSACTION_TYPE = os.environ.get("MPESA_TRANSACTION_TYPE", "CustomerPayBillOnline")
-# Public HTTPS base URL Safaricom can reach, e.g. https://petals-api.onrender.com
-MPESA_CALLBACK_BASE_URL = os.environ.get("MPESA_CALLBACK_BASE_URL", "")
-# Random string appended to the callback path so the URL cannot be guessed.
-# Daraja does not sign callbacks, so this plus a status-query check is our defence.
-MPESA_CALLBACK_SECRET = os.environ.get("MPESA_CALLBACK_SECRET", "")
-MPESA_HTTP_TIMEOUT = int(os.environ.get("MPESA_HTTP_TIMEOUT", "20"))
+# Orders still awaiting payment are cancelled (and reserved stock released) after this long.
+# Payments are handled outside this service for now, so staff confirm orders manually:
+# the default is a full day. Shorten it once an online payment service is connected.
+PAYMENT_TIMEOUT_MINUTES = int(os.environ.get("PAYMENT_TIMEOUT_MINUTES", "1440"))
 
 # --- Production hardening -------------------------------------------------
 if not DEBUG:

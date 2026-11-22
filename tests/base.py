@@ -22,22 +22,10 @@ from apps.orders.services import business_now
 User = get_user_model()
 _keys = count(1)
 
-MPESA_SETTINGS = dict(
-    MPESA_ENV="sandbox",
-    MPESA_CONSUMER_KEY="key",
-    MPESA_CONSUMER_SECRET="secret",
-    MPESA_SHORTCODE="174379",
-    MPESA_PASSKEY="passkey",
-    MPESA_CALLBACK_BASE_URL="https://api.example.com",
-    MPESA_CALLBACK_SECRET="s3cret",
-)
-
-
 def idem() -> str:
     return f"test-key-{next(_keys):06d}"
 
 
-@override_settings(**MPESA_SETTINGS)
 class BaseTest(APITestCase):
     PASSWORD = "Str0ng-pass-123"
 
@@ -93,7 +81,6 @@ class BaseTest(APITestCase):
             "deliverySlot": self.slot.pk,
             "deliveryDate": self.delivery_date(),
             "cardMessage": "Happy birthday",
-            "mpesaPhone": "0712345678",
         }
         payload.update(overrides)
         return payload

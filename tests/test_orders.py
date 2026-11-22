@@ -1,7 +1,11 @@
 from datetime import date, timedelta
 
 from apps.catalogue.models import BlockedDate, ProductVariant
+from django.utils import timezone
+
+from apps.core.models import Notification
 from apps.orders.models import Order
+from apps.orders.services import confirm_order_payment, expire_stale_orders
 
 from .base import BaseTest, idem
 
@@ -80,12 +84,11 @@ class OrderCreationTests(BaseTest):
         self.assertEqual(r.data["error"]["code"], "IDEMPOTENCY_CONFLICT")
 
     def test_validation_errors_use_envelope_with_camel_fields(self):
-        r = self.place_order(recipientPhone="123", recipientName="", mpesaPhone="abc")
+        r = self.place_order(recipientPhone="123", recipientName="")
         self.assertEqual(r.status_code, 400)
         fields = r.data["error"]["fields"]
         self.assertIn("recipientPhone", fields)
         self.assertIn("recipientName", fields)
-        self.assertIn("mpesaPhone", fields)
 
     def test_empty_cart_and_bad_quantity(self):
         self.assertEqual(self.place_order(items=[]).status_code, 400)
@@ -183,14 +186,70 @@ class OrderAccessAndFulfilmentTests(BaseTest):
         bad = self.client.post(f"/api/v1/admin/orders/{order_id}/status", {"status": "preparing"}, format="json")
         self.assertEqual(bad.status_code, 409)
 
-    def test_staff_cannot_mark_unpaid_order_fulfilled_or_confirmed(self):
+    def test_staff_cannot_fulfil_an_unpaid_order(self):
         order_id = self.place_order().data["id"]
         self.login(self.staff)
-        for target in ("delivered", "confirmed", "preparing"):
+        for target in ("preparing", "ready", "out_for_delivery", "delivered"):
             r = self.client.post(f"/api/v1/admin/orders/{order_id}/status", {"status": target}, format="json")
             self.assertEqual(r.status_code, 409, target)
-            self.assertEqual(r.data["error"]["code"], "PAYMENT_REQUIRED")
+            self.assertEqual(r.data["error"]["code"], "INVALID_TRANSITION")
         self.assertEqual(Order.objects.get(pk=order_id).status, "pending_payment")
+
+    def test_staff_can_confirm_payment_manually_and_it_is_audited_and_notified(self):
+        order_id = self.place_order().data["id"]
+        self.login(self.staff)
+        r = self.client.post(
+            f"/api/v1/admin/orders/{order_id}/status",
+            {"status": "confirmed", "note": "Paid via till, ref ABC"},
+            format="json",
+        )
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.data["status"], "confirmed")
+        self.assertIsNotNone(r.data["paidAt"])
+        from apps.orders.models import OrderStatusEvent
+
+        event = OrderStatusEvent.objects.filter(order_id=order_id).latest("created_at")
+        self.assertEqual((event.to_status, event.actor_id, event.note), ("confirmed", self.staff.pk, "Paid via till, ref ABC"))
+        self.assertEqual(Notification.objects.filter(kind="order_confirmed", status="queued").count(), 3)
+        from apps.core.models import AuditEvent
+
+        self.assertTrue(AuditEvent.objects.filter(action="order.status_changed").exists())
+
+    def test_customer_cannot_confirm_their_own_order(self):
+        order_id = self.place_order().data["id"]
+        r = self.client.post(f"/api/v1/admin/orders/{order_id}/status", {"status": "confirmed"}, format="json")
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(Order.objects.get(pk=order_id).status, "pending_payment")
+
+    def test_confirm_order_payment_is_idempotent_and_never_revives_cancelled_orders(self):
+        order_id = self.place_order().data["id"]
+        self.assertEqual(confirm_order_payment(order_id), "confirmed")
+        self.assertEqual(confirm_order_payment(order_id), "already")
+        self.assertEqual(Notification.objects.filter(kind="order_confirmed").count(), 3)  # not doubled
+        cancelled = self.place_order(user=self.other).data["id"]
+        Order.objects.filter(pk=cancelled).update(status=Order.Status.CANCELLED)
+        self.assertEqual(confirm_order_payment(cancelled), "cancelled")
+        self.assertEqual(Order.objects.get(pk=cancelled).status, "cancelled")
+
+    def test_expired_unpaid_orders_are_cancelled_and_stock_released(self):
+        key = idem()
+        payload = {"items": [{"productId": "tracked", "variantId": self.tracked_v.pk, "quantity": 2}]}
+        r = self.place_order(key=key, **payload)
+        self.assertEqual(r.status_code, 201, r.content)
+        self.tracked_v.refresh_from_db()
+        self.assertEqual(self.tracked_v.stock_quantity, 1)
+        self.assertEqual(expire_stale_orders(), 0)  # deadline not reached
+        Order.objects.filter(pk=r.data["id"]).update(expires_at=timezone.now())
+        self.assertEqual(expire_stale_orders(), 1)
+        self.assertEqual(Order.objects.get(pk=r.data["id"]).status, "cancelled")
+        self.tracked_v.refresh_from_db()
+        self.assertEqual(self.tracked_v.stock_quantity, 3)
+        self.assertEqual(expire_stale_orders(), 0)  # idempotent
+
+    def test_order_response_has_no_payment_provider_fields(self):
+        r = self.place_order()
+        self.assertNotIn("payment", r.data)
+        self.assertNotIn("mpesaPhone", r.data)
 
     def test_customer_cannot_change_status_via_staff_api(self):
         order_id = self.place_order().data["id"]

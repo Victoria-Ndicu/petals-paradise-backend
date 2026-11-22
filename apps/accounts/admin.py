@@ -3,11 +3,22 @@ from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 
 from apps.core.models import record_audit
 
-from .models import User
+from .models import SocialAccount, User
+
+
+class SocialAccountInline(admin.TabularInline):
+    model = SocialAccount
+    extra = 0
+    can_delete = False
+    readonly_fields = ("provider", "subject", "email", "created_at")
+
+    def has_add_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(User)
 class UserAdmin(DjangoUserAdmin):
+    inlines = [SocialAccountInline]
     ordering = ("-date_joined",)
     list_display = ("name", "phone", "email", "is_staff", "is_active", "date_joined")
     list_filter = ("is_staff", "is_superuser", "is_active")

@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 
-from apps.payments.services import expire_stale_orders
+from apps.orders.services import expire_stale_orders
 
 
 class Command(BaseCommand):
