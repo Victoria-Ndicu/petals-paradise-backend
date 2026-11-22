@@ -31,6 +31,10 @@ DEBUG=true python manage.py test tests
      past their deadline and releases reserved stock)
 3. Fill in the prompted values: `CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS` (your
    storefront origin), and `GOOGLE_CLIENT_IDS` / `APPLE_CLIENT_IDS` if you want social sign-in.
+   The Blueprint connects `DATABASE_URL` to the `petals-db` Postgres database and applies
+   migrations during the build. If you already created the web service outside this Blueprint,
+   configure its `DATABASE_URL` to use the `petals-db` connection string; production now refuses
+   to start against SQLite.
 4. Create the first staff user: Render dashboard > `petals-api` > **Shell**, then
    `python manage.py createsuperuser`. Staff log in at `/admin/`.
 5. Check plan names and prices in `render.yaml` against Render's current pricing. Do not use

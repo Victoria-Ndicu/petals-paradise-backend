@@ -90,7 +90,12 @@ WSGI_APPLICATION = "config.wsgi.application"
 
 # --- Database -------------------------------------------------------------
 # Render provides DATABASE_URL for its managed Postgres. Falls back to SQLite
-# for local development / tests only.
+# for local development / tests only. Never let a production deployment start
+# against an ephemeral local SQLite file.
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DEBUG and not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is required when DEBUG is off.")
+
 DATABASES = {
     "default": dj_database_url.config(
         default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
@@ -98,6 +103,8 @@ DATABASES = {
         conn_health_checks=True,
     )
 }
+if not DEBUG and DATABASES["default"]["ENGINE"] == "django.db.backends.sqlite3":
+    raise RuntimeError("A persistent database is required when DEBUG is off; SQLite is for local development only.")
 
 # --- Cache (used by DRF throttling) ---------------------------------------
 # Throttle counters must be shared across gunicorn workers, so per-process
