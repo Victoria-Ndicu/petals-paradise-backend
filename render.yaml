@@ -1,0 +1,78 @@
+# Render Blueprint for the Petals Paradise backend.
+# Deploy: push this repo to GitHub/GitLab, then in Render choose
+# New > Blueprint and select the repo. Fill in the `sync: false` secrets when prompted.
+#
+# Plan names/prices change over time - check https://render.com/pricing before applying.
+# NOTE: Render's free Postgres expires after 30 days; use a paid plan for real orders.
+
+databases:
+  - name: petals-db
+    databaseName: petals
+    plan: basic-256mb
+    region: frankfurt # closest Render region to Kenya
+
+envVarGroups:
+  - name: petals-shared
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DEBUG
+        value: "false"
+      - key: MPESA_CALLBACK_SECRET
+        generateValue: true
+      - key: MPESA_ENV
+        value: sandbox # switch to "production" only after sandbox + reconciliation sign-off
+      - key: MPESA_CONSUMER_KEY
+        sync: false
+      - key: MPESA_CONSUMER_SECRET
+        sync: false
+      - key: MPESA_SHORTCODE
+        sync: false
+      - key: MPESA_PASSKEY
+        sync: false
+      # Public HTTPS URL of the web service, e.g. https://petals-api.onrender.com
+      # (or your custom API domain). Safaricom posts callbacks here.
+      - key: MPESA_CALLBACK_BASE_URL
+        sync: false
+      # Your storefront origin(s), comma separated, e.g. https://petalsparadise.co.ke
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false
+
+services:
+  - type: web
+    name: petals-api
+    runtime: python
+    region: frankfurt
+    plan: starter
+    buildCommand: ./build.sh
+    startCommand: gunicorn config.wsgi:application --workers 3 --timeout 60 --access-logfile -
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: petals-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - fromGroup: petals-shared
+
+  # Resolves M-Pesa payments whose callback never arrived and cancels unpaid orders.
+  - type: cron
+    name: petals-payment-sweeper
+    runtime: python
+    region: frankfurt
+    plan: starter
+    schedule: "*/5 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python manage.py reconcile_payments && python manage.py expire_unpaid_orders
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: petals-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - fromGroup: petals-shared
