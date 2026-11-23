@@ -77,14 +77,16 @@ Staff are created only in the admin or with `createsuperuser`; public sign-up ca
 
 Public: `GET products` (`?category=&search=&ordering=name|price|-price`), `GET products/{id}`,
 `GET delivery-options`, `POST inquiries`, `GET auth/csrf`, `POST auth/signup`, `POST auth/login`,
-`POST auth/social/google`, `POST auth/social/apple`.
+`POST auth/verify-email`, `POST auth/verify-email/resend`, `POST auth/social/google`,
+`POST auth/social/apple`.
 Customer: `POST auth/logout`, `POST auth/social/{provider}/link`, `GET/PATCH me`, `POST orders`, `GET orders/{id}`,
 `POST orders/{id}/cancel`, `GET me/orders`. Staff: `admin/orders`, `admin/orders/{id}`,
 `admin/orders/{id}/status`, `admin/inquiries`, `admin/inquiries/{id}`.
 
 Password sign-up requires an email and password; phone is optional and can be added later via
-`PATCH /me`. Phone login remains available for accounts that have a phone. Checkout still asks
-for the delivery recipient's phone number.
+`PATCH /me`. A verification link is sent after sign-up and when the account email changes.
+Phone login remains available for accounts that have a phone. Checkout still asks for the
+delivery recipient's phone number.
 
 ### What the frontend must do
 
@@ -135,11 +137,15 @@ POST /api/v1/auth/social/apple    {"idToken": "...", "name": "Jane Doe", "phone"
 
 - Returning user -> `200` and a session. New user -> phone is optional; the account is created
   with `phone: null` if it is omitted. Success is `201`.
+- If the provider supplies a verified email already used by an account, the social identity is
+  linked to that account and the customer is signed in. An unverified matching email is never
+  linked; the API returns `409 EMAIL_NOT_VERIFIED`.
 - Apple only gives the name to the browser (not in the token), so pass it as `name`.
 - `nonce` is optional but recommended: send the same value you gave the provider.
-- Email already used by a password account -> `409 ACCOUNT_EXISTS`. We never auto-link on
-  email (emails are unverified, so that would allow account pre-hijacking). The customer signs
-  in with their password and calls `POST auth/social/{provider}/link` with a fresh token.
+- For password-created accounts, email starts unverified until the signed verification link is
+  used. Google/Apple account linking by email is allowed only when the provider's verified-email
+  claim is valid. Existing accounts can also link a provider while signed in using
+  `POST auth/social/{provider}/link`.
 - Social-only accounts have no usable password. `GET me` returns `socialProviders`.
 - Disabled until configured: set `GOOGLE_CLIENT_IDS` (Web client ID from Google Cloud Console >
   APIs & Services > Credentials, with your storefront as an authorised JavaScript origin) and/or
@@ -149,12 +155,21 @@ POST /api/v1/auth/social/apple    {"idToken": "...", "name": "Jane Doe", "phone"
 - Not built: unlinking a provider and setting a password on a social-only account (needs the
   password-reset policy first, so users can't lock themselves out).
 
+### Email delivery configuration
+
+Email verification uses Django SMTP. Configure `FRONTEND_URL` to the storefront origin and set
+`EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`, and
+`DEFAULT_FROM_EMAIL` in Render. For local `DEBUG=true` development without an SMTP host, messages
+are printed to the runserver console. For production, use an SMTP provider with a free tier for
+testing or low-volume transactional mail; never put SMTP credentials in source control. For
+example, Gmail SMTP uses `smtp.gmail.com:587` with TLS and an app password (not the Google
+account password); check the provider's current sending limits and sender requirements.
+
 ## Known gaps / decisions still needed (from the requirements, Phase 0)
 
 - Placeholder seed data only: real variant labels, prices, delivery zones/fees, lead times,
   slots and blocked dates must be entered by the business.
-- Password reset and phone/email verification are not implemented (policy undecided); nothing
-  implies an account is verified.
+- Password reset is not implemented. Email verification links expire after 24 hours.
 - Notifications are recorded as `queued` and are never marked `sent`: no SMS/WhatsApp/email
   provider is connected yet (Phase 2).
 - No online payments yet and no refund handling (separate payments repo).

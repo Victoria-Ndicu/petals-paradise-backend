@@ -52,6 +52,8 @@ class SocialIdentity:
     provider: str
     subject: str
     email: str | None  # only set when the provider says it is verified
+    claimed_email: str | None
+    email_verified: bool
     name: str
 
 
@@ -106,11 +108,13 @@ def verify_id_token(provider: str, token: str, nonce: str | None = None) -> Soci
                 status.HTTP_401_UNAUTHORIZED,
             )
 
-    email = (claims.get("email") or "").strip().lower()
-    verified = bool(email) and _truthy(claims.get("email_verified"))
+    claimed_email = (claims.get("email") or "").strip().lower() or None
+    verified = bool(claimed_email) and _truthy(claims.get("email_verified"))
     return SocialIdentity(
         provider=provider,
         subject=str(claims["sub"]),
-        email=email if verified else None,
+        email=claimed_email if verified else None,
+        claimed_email=claimed_email,
+        email_verified=verified,
         name=str(claims.get("name") or "").strip(),
     )

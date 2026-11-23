@@ -22,8 +22,11 @@ class ProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["id", "name", "phone", "email", "default_delivery_area", "default_address", "socialProviders"]
-        read_only_fields = ["id", "socialProviders"]
+        fields = [
+            "id", "name", "phone", "email", "email_verified", "default_delivery_area", "default_address",
+            "socialProviders",
+        ]
+        read_only_fields = ["id", "email_verified", "socialProviders"]
 
     def get_socialProviders(self, obj):
         if not obj.pk:
@@ -107,3 +110,11 @@ class SocialLoginSerializer(serializers.Serializer):
 class SocialLinkSerializer(serializers.Serializer):
     idToken = serializers.CharField(max_length=8192, trim_whitespace=True)
     nonce = serializers.CharField(max_length=256, required=False, allow_blank=True)
+
+
+class EmailVerificationSerializer(serializers.Serializer):
+    token = serializers.CharField(max_length=2048, trim_whitespace=True)
+
+
+class EmailVerificationResendSerializer(serializers.Serializer):
+    email = serializers.EmailField()

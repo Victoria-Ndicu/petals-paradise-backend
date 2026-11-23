@@ -61,6 +61,7 @@ class SocialLoginTests(BaseTest):
         self.assertEqual(r.status_code, 201, r.content)
         self.assertEqual(r.data["phone"], "254711222333")
         self.assertEqual(r.data["email"], "flora@example.com")
+        self.assertTrue(r.data["email_verified"])
         self.assertEqual(r.data["name"], "Flora Wanjiru")
         self.assertEqual(r.data["socialProviders"], ["google"])
         user = User.objects.get(phone="254711222333")
@@ -103,13 +104,25 @@ class SocialLoginTests(BaseTest):
         self.assertEqual(r.data["email"], "x@privaterelay.appleid.com")
         self.assertEqual(r.data["socialProviders"], ["apple"])
 
-    # --- account takeover protection -----------------------------------
-    def test_never_auto_links_to_existing_password_account_by_email(self):
+    # --- verified-email account linking --------------------------------
+    def test_verified_google_email_links_existing_password_account(self):
         token = make_token(email="jane@example.com")  # fixture customer's email
-        r = self.post(token=token, phone="0799000111")
+        r = self.post(token=token)
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.data["id"], self.customer.pk)
+        self.assertEqual(r.data["socialProviders"], ["google"])
+        self.assertEqual(SocialAccount.objects.get().user_id, self.customer.pk)
+        self.customer.refresh_from_db()
+        self.assertTrue(self.customer.email_verified)
+        self.assertEqual(self.client.get("/api/v1/me").status_code, 200)
+
+    def test_unverified_matching_google_email_cannot_link_or_create_duplicate(self):
+        token = make_token(email="jane@example.com", email_verified=False)
+        r = self.post(token=token)
         self.assertEqual(r.status_code, 409)
-        self.assertEqual(r.data["error"]["code"], "ACCOUNT_EXISTS")
+        self.assertEqual(r.data["error"]["code"], "EMAIL_NOT_VERIFIED")
         self.assertFalse(SocialAccount.objects.exists())
+        self.assertEqual(User.objects.count(), 3)
         self.assertEqual(self.client.get("/api/v1/me").status_code, 401)
 
     # --- token verification --------------------------------------------

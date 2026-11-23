@@ -13,7 +13,10 @@ from apps.core.exceptions import ApiError
 from apps.core.phone import normalize_ke_phone
 
 from .models import SocialAccount
+from .email_verification import send_verification_email, verify_email_token
 from .serializers import (
+    EmailVerificationResendSerializer,
+    EmailVerificationSerializer,
     LoginSerializer,
     ProfileSerializer,
     SignupSerializer,
@@ -46,6 +49,7 @@ class SignupView(APIView):
         serializer = SignupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+        send_verification_email(user)
         login(request, user, backend="apps.accounts.backends.PhoneOrEmailBackend")
         return Response(ProfileSerializer(user).data, status=status.HTTP_201_CREATED)
 
@@ -88,8 +92,45 @@ class MeView(APIView):
     def patch(self, request):
         serializer = ProfileSerializer(request.user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+        previous_email = request.user.email
         serializer.save()
+        if request.user.email != previous_email:
+            request.user.email_verified = False
+            request.user.save(update_fields=["email_verified", "updated_at"])
+            if request.user.email:
+                send_verification_email(request.user)
         return Response(serializer.data)
+
+
+@method_decorator(csrf_protect, name="dispatch")
+class VerifyEmailView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "login"
+
+    def post(self, request):
+        serializer = EmailVerificationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = verify_email_token(serializer.validated_data["token"])
+        return Response({"email": user.email, "email_verified": user.email_verified})
+
+
+@method_decorator(csrf_protect, name="dispatch")
+class ResendEmailVerificationView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "login"
+
+    def post(self, request):
+        serializer = EmailVerificationResendSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data["email"].strip().lower()
+        user = User.objects.filter(email=email, email_verified=False).first()
+        if user:
+            send_verification_email(user)
+        return Response(
+            {"message": "If that address has an unverified account, a verification email has been sent."}
+        )
 
 
 def _provider_or_404(provider: str) -> str:
@@ -104,8 +145,8 @@ class SocialLoginView(APIView):
 
     - Known provider identity  -> sign in.
     - New identity             -> create a customer and sign in; phone is optional.
-    - Email already belongs to a password account -> 409. We never auto-link on email:
-      our emails are not verified, so doing so would allow account pre-hijacking.
+    - A verified provider email matching an existing account links that identity.
+      An unverified provider email never links or claims an existing account.
     """
 
     permission_classes = [AllowAny]
@@ -141,18 +182,53 @@ class SocialLoginView(APIView):
                 "Please review the highlighted fields.",
                 fields={"phone": "An account with this phone number already exists."},
             )
-        if identity.email and User.objects.filter(email=identity.email).exists():
-            raise ApiError(
-                "ACCOUNT_EXISTS",
-                "An account with this email already exists. Sign in with your password, "
-                "then connect your account from your profile.",
-                status.HTTP_409_CONFLICT,
-            )
+        matched_user = None
+        if identity.claimed_email:
+            matched_user = User.objects.filter(email=identity.claimed_email).first()
+        if matched_user:
+            if not identity.email_verified:
+                raise ApiError(
+                    "EMAIL_NOT_VERIFIED",
+                    "Verify this email with your sign-in provider, then try again.",
+                    status.HTTP_409_CONFLICT,
+                )
+            if not matched_user.is_active:
+                raise ApiError("ACCOUNT_DISABLED", "This account is disabled.", status.HTTP_403_FORBIDDEN)
+            if matched_user.social_accounts.filter(provider=provider).exists():
+                raise ApiError(
+                    "SOCIAL_ALREADY_LINKED",
+                    f"A different {PROVIDERS[provider]['label']} account is already connected.",
+                    status.HTTP_409_CONFLICT,
+                )
+            try:
+                with transaction.atomic():
+                    SocialAccount.objects.create(
+                        user=matched_user,
+                        provider=provider,
+                        subject=identity.subject,
+                        email=identity.email,
+                    )
+                    if not matched_user.email_verified:
+                        matched_user.email_verified = True
+                        matched_user.save(update_fields=["email_verified", "updated_at"])
+            except IntegrityError as exc:
+                raise ApiError(
+                    "SOCIAL_ACCOUNT_IN_USE",
+                    "That social account is already connected to another account.",
+                    status.HTTP_409_CONFLICT,
+                ) from exc
+            login(request, matched_user, backend=SESSION_BACKEND)
+            return Response(ProfileSerializer(matched_user).data)
 
         name = (data.get("name") or identity.name or "").strip() or "Customer"
         try:
             with transaction.atomic():
-                user = User(name=name[:120], phone=phone, email=identity.email)
+                user = User(
+                    name=name[:120],
+                    phone=phone,
+                    email=identity.email,
+                    email_verified=identity.email_verified,
+                )
                 user.set_unusable_password()  # social-only: no password sign-in until they set one
                 user.save()
                 SocialAccount.objects.create(

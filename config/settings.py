@@ -146,6 +146,22 @@ AUTH_PASSWORD_VALIDATORS = [
 GOOGLE_CLIENT_IDS = env_list("GOOGLE_CLIENT_IDS")
 APPLE_CLIENT_IDS = env_list("APPLE_CLIENT_IDS")
 
+# --- Email ---------------------------------------------------------------
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", True)
+EMAIL_TIMEOUT = 10
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "Petals Paradise <noreply@localhost>")
+EMAIL_BACKEND = (
+    "django.core.mail.backends.console.EmailBackend"
+    if DEBUG and not EMAIL_HOST
+    else "django.core.mail.backends.smtp.EmailBackend"
+)
+EMAIL_VERIFICATION_TIMEOUT_SECONDS = 60 * 60 * 24
+
 # --- Sessions / cookies ---------------------------------------------------
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 14  # 14 days

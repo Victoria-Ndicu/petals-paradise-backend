@@ -1,3 +1,7 @@
+import re
+
+from django.core import mail
+from django.test import override_settings
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
@@ -20,12 +24,19 @@ class AccountTests(BaseTest):
         self.assertEqual(self.client.get("/api/v1/me").status_code, 200)
 
     def test_signup_without_phone_uses_email_for_login(self):
-        r = self.signup(phone=None)
+        with override_settings(
+            EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+            FRONTEND_URL="https://store.example",
+        ):
+            r = self.signup(phone=None)
         self.assertEqual(r.status_code, 201, r.content)
         self.assertIsNone(r.data["phone"])
         self.assertEqual(r.data["email"], "new@example.com")
+        self.assertFalse(r.data["email_verified"])
         user = User.objects.get(email="new@example.com")
         self.assertIsNone(user.phone)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("https://store.example/#/verify-email?token=", mail.outbox[0].body)
 
         self.client.post("/api/v1/auth/logout")
         r = self.client.post(
@@ -34,6 +45,50 @@ class AccountTests(BaseTest):
             format="json",
         )
         self.assertEqual(r.status_code, 200, r.content)
+
+    def test_email_verification_link_marks_address_verified(self):
+        with override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            r = self.signup(phone=None)
+        self.assertEqual(r.status_code, 201, r.content)
+        token = re.search(r"token=([^\s]+)", mail.outbox[-1].body).group(1)
+        r = self.client.post("/api/v1/auth/verify-email", {"token": token}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertTrue(r.data["email_verified"])
+        self.customer = User.objects.get(email="new@example.com")
+        self.assertTrue(self.customer.email_verified)
+
+    def test_resend_email_verification_does_not_disclose_unknown_addresses(self):
+        with override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            self.signup(phone=None)
+            known = self.client.post(
+                "/api/v1/auth/verify-email/resend",
+                {"email": "new@example.com"},
+                format="json",
+            )
+            unknown = self.client.post(
+                "/api/v1/auth/verify-email/resend",
+                {"email": "unknown@example.com"},
+                format="json",
+            )
+        self.assertEqual(known.status_code, 200)
+        self.assertEqual(known.data, unknown.data)
+        self.assertEqual(len(mail.outbox), 2)
+
+    def test_changing_email_sends_new_verification_and_resets_verified_flag(self):
+        self.customer.email_verified = True
+        self.customer.save(update_fields=["email_verified"])
+        self.login(self.customer)
+        with override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            r = self.client.patch("/api/v1/me", {"email": "new@example.com"}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertFalse(r.data["email_verified"])
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["new@example.com"])
+
+    def test_email_verification_rejects_tampered_tokens(self):
+        r = self.client.post("/api/v1/auth/verify-email", {"token": "invalid"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.data["error"]["code"], "INVALID_EMAIL_VERIFICATION")
 
     def test_profile_can_add_and_remove_phone(self):
         self.login(self.customer)

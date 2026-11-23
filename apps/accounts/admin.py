@@ -20,18 +20,19 @@ class SocialAccountInline(admin.TabularInline):
 class UserAdmin(DjangoUserAdmin):
     inlines = [SocialAccountInline]
     ordering = ("-date_joined",)
-    list_display = ("name", "phone", "email", "is_staff", "is_active", "date_joined")
+    list_display = ("name", "phone", "email", "email_verified", "is_staff", "is_active", "date_joined")
     list_filter = ("is_staff", "is_superuser", "is_active")
     search_fields = ("name", "phone", "email")
     fieldsets = (
         (None, {"fields": ("phone", "password")}),
-        ("Profile", {"fields": ("name", "email", "default_delivery_area", "default_address")}),
+        ("Profile", {"fields": ("name", "email", "email_verified", "default_delivery_area", "default_address")}),
         ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")}),
         ("Dates", {"fields": ("last_login", "date_joined")}),
     )
     add_fieldsets = (
         (None, {"classes": ("wide",), "fields": ("phone", "name", "email", "password1", "password2", "is_staff")}),
     )
+    readonly_fields = ("email_verified",)
 
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)

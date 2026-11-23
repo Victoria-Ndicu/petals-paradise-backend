@@ -43,6 +43,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text="Optional; normalized when set, e.g. 254712345678",
     )
     email = models.EmailField(max_length=254, unique=True, null=True, blank=True)
+    email_verified = models.BooleanField(default=False)
     default_delivery_area = models.CharField(max_length=80, blank=True)
     default_address = models.CharField(max_length=300, blank=True)
 
