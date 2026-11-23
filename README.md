@@ -21,6 +21,22 @@ python manage.py runserver
 DEBUG=true python manage.py test tests
 ```
 
+On Windows PowerShell, activate the virtual environment and set the local
+development environment variables in the same terminal before running Django:
+
+```powershell
+.\venv\Scripts\Activate.ps1
+$env:DEBUG = "true"
+$env:SECRET_KEY = "local-development-only-do-not-use-in-production"
+python manage.py migrate
+python manage.py seed_demo
+python manage.py runserver
+```
+
+`DEBUG=true` enables the local SQLite fallback and development-only secret key.
+Do not use these values in production; production requires a configured
+`SECRET_KEY` and persistent `DATABASE_URL`.
+
 ## Deploy on Render
 
 1. Push this folder to a GitHub/GitLab repo.
