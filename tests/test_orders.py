@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 
+from apps.accounts.models import User
 from apps.catalogue.models import BlockedDate, ProductVariant
 from django.utils import timezone
 
@@ -230,6 +231,17 @@ class OrderAccessAndFulfilmentTests(BaseTest):
         Order.objects.filter(pk=cancelled).update(status=Order.Status.CANCELLED)
         self.assertEqual(confirm_order_payment(cancelled), "cancelled")
         self.assertEqual(Order.objects.get(pk=cancelled).status, "cancelled")
+
+    def test_confirmation_does_not_queue_phone_notifications_without_account_phone(self):
+        customer = User.objects.create_user(
+            None, self.PASSWORD, name="Email Customer", email="email@example.com"
+        )
+        order_id = self.place_order(user=customer).data["id"]
+        self.assertEqual(confirm_order_payment(order_id), "confirmed")
+        notifications = Notification.objects.filter(kind="order_confirmed")
+        self.assertEqual(notifications.count(), 1)
+        self.assertEqual(notifications.get().channel, Notification.Channel.EMAIL)
+        self.assertEqual(notifications.get().recipient, customer.email)
 
     def test_expired_unpaid_orders_are_cancelled_and_stock_released(self):
         key = idem()

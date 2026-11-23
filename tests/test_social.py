@@ -48,13 +48,13 @@ class SocialLoginTests(BaseTest):
         return self.client.post(f"/api/v1/auth/social/{provider}", body, format="json")
 
     # --- sign up / sign in ---------------------------------------------
-    def test_new_user_must_supply_phone_and_nothing_is_created_without_it(self):
+    def test_new_user_can_sign_up_without_phone(self):
         r = self.post()
-        self.assertEqual(r.status_code, 400)
-        self.assertEqual(r.data["error"]["code"], "PHONE_REQUIRED")
-        self.assertIn("phone", r.data["error"]["fields"])
-        self.assertFalse(SocialAccount.objects.exists())
-        self.assertEqual(self.client.get("/api/v1/me").status_code, 401)
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertIsNone(r.data["phone"])
+        user = User.objects.get(social_accounts__provider="google")
+        self.assertIsNone(user.phone)
+        self.assertEqual(self.client.get("/api/v1/me").status_code, 200)
 
     def test_signup_with_phone_creates_customer_and_session(self):
         r = self.post(phone="0711 222 333")

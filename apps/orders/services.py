@@ -116,14 +116,15 @@ def confirm_order_payment(order_id, *, actor=None, note: str = "Payment confirme
             return "already"
         transition_order(order, Order.Status.CONFIRMED, actor=actor, note=note)
         customer = order.customer
-        for channel in (Notification.Channel.SMS, Notification.Channel.WHATSAPP):
-            enqueue_notification(
-                channel=channel,
-                kind="order_confirmed",
-                recipient=customer.phone,
-                related_type="order",
-                related_id=order.pk,
-            )
+        if customer.phone:
+            for channel in (Notification.Channel.SMS, Notification.Channel.WHATSAPP):
+                enqueue_notification(
+                    channel=channel,
+                    kind="order_confirmed",
+                    recipient=customer.phone,
+                    related_type="order",
+                    related_id=order.pk,
+                )
         if customer.email:
             enqueue_notification(
                 channel=Notification.Channel.EMAIL,

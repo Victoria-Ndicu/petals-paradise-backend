@@ -16,7 +16,7 @@ def _clean_phone(value: str) -> str:
 
 
 class ProfileSerializer(serializers.ModelSerializer):
-    phone = serializers.CharField(max_length=20)
+    phone = serializers.CharField(max_length=20, required=False, allow_blank=True, allow_null=True)
     email = serializers.EmailField(required=False, allow_blank=True, allow_null=True)
     socialProviders = serializers.SerializerMethodField()
 
@@ -37,6 +37,8 @@ class ProfileSerializer(serializers.ModelSerializer):
         return value
 
     def validate_phone(self, value):
+        if not value:
+            return None
         phone = _clean_phone(value)
         qs = User.objects.filter(phone=phone)
         if self.instance:
@@ -66,13 +68,14 @@ class ProfileSerializer(serializers.ModelSerializer):
 
 
 class SignupSerializer(ProfileSerializer):
+    email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8, max_length=128, trim_whitespace=False)
 
     class Meta(ProfileSerializer.Meta):
         fields = ProfileSerializer.Meta.fields + ["password"]
 
     def validate(self, attrs):
-        candidate = User(name=attrs.get("name", ""), phone=attrs.get("phone", ""), email=attrs.get("email"))
+        candidate = User(name=attrs.get("name", ""), phone=attrs.get("phone"), email=attrs.get("email"))
         try:
             validate_password(attrs["password"], candidate)
         except DjangoValidationError as exc:
@@ -97,7 +100,7 @@ class SocialLoginSerializer(serializers.Serializer):
     nonce = serializers.CharField(max_length=256, required=False, allow_blank=True)
     # Apple only sends the user's name to the browser (not in the token), so the SPA passes it on.
     name = serializers.CharField(max_length=120, required=False, allow_blank=True)
-    # Required the first time someone signs up (phone is our unique customer key).
+    # Optional profile phone; checkout collects the delivery recipient's number.
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
 
 

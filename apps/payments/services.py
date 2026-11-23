@@ -164,14 +164,15 @@ def _mark_paid(payment: Payment, receipt: str = "") -> None:
     if order.status == Order.Status.PENDING_PAYMENT:
         transition_order(order, Order.Status.CONFIRMED, actor=None, note="M-Pesa payment verified")
         customer = order.customer
-        for channel in (Notification.Channel.SMS, Notification.Channel.WHATSAPP):
-            enqueue_notification(
-                channel=channel,
-                kind="order_confirmed",
-                recipient=customer.phone,
-                related_type="order",
-                related_id=order.pk,
-            )
+        if customer.phone:
+            for channel in (Notification.Channel.SMS, Notification.Channel.WHATSAPP):
+                enqueue_notification(
+                    channel=channel,
+                    kind="order_confirmed",
+                    recipient=customer.phone,
+                    related_type="order",
+                    related_id=order.pk,
+                )
         if customer.email:
             enqueue_notification(
                 channel=Notification.Channel.EMAIL,

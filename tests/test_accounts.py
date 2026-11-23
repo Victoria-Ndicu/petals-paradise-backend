@@ -19,6 +19,34 @@ class AccountTests(BaseTest):
         self.assertNotIn("password", r.data)
         self.assertEqual(self.client.get("/api/v1/me").status_code, 200)
 
+    def test_signup_without_phone_uses_email_for_login(self):
+        r = self.signup(phone=None)
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertIsNone(r.data["phone"])
+        self.assertEqual(r.data["email"], "new@example.com")
+        user = User.objects.get(email="new@example.com")
+        self.assertIsNone(user.phone)
+
+        self.client.post("/api/v1/auth/logout")
+        r = self.client.post(
+            "/api/v1/auth/login",
+            {"identifier": "new@example.com", "password": "Another-str0ng-pw"},
+            format="json",
+        )
+        self.assertEqual(r.status_code, 200, r.content)
+
+    def test_profile_can_add_and_remove_phone(self):
+        self.login(self.customer)
+        r = self.client.patch("/api/v1/me", {"phone": ""}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertIsNone(r.data["phone"])
+        self.customer.refresh_from_db()
+        self.assertIsNone(self.customer.phone)
+
+        r = self.client.patch("/api/v1/me", {"phone": "0712345678"}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.data["phone"], "254712345678")
+
     def test_password_is_hashed_with_argon2(self):
         self.signup()
         self.assertTrue(User.objects.get(phone="254711222333").password.startswith("argon2"))

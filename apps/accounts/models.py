@@ -8,9 +8,9 @@ from apps.core.phone import normalize_ke_phone
 class UserManager(BaseUserManager):
     use_in_migrations = True
 
-    def _create(self, phone, password, **extra):
-        normalized = normalize_ke_phone(phone)
-        if not normalized:
+    def _create(self, phone=None, password=None, **extra):
+        normalized = normalize_ke_phone(phone) if phone else None
+        if phone and not normalized:
             raise ValueError("A valid Kenyan phone number is required.")
         email = (extra.pop("email", None) or "").strip().lower() or None
         user = self.model(phone=normalized, email=email, **extra)
@@ -18,12 +18,12 @@ class UserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
-    def create_user(self, phone, password=None, **extra):
+    def create_user(self, phone=None, password=None, **extra):
         extra.setdefault("is_staff", False)
         extra.setdefault("is_superuser", False)
         return self._create(phone, password, **extra)
 
-    def create_superuser(self, phone, password=None, **extra):
+    def create_superuser(self, phone=None, password=None, **extra):
         extra.setdefault("is_staff", True)
         extra.setdefault("is_superuser", True)
         extra.setdefault("name", "Administrator")
@@ -35,7 +35,13 @@ class User(AbstractBaseUser, PermissionsMixin):
     never through the public sign-up API."""
 
     name = models.CharField(max_length=120)
-    phone = models.CharField(max_length=15, unique=True, help_text="Normalized, e.g. 254712345678")
+    phone = models.CharField(
+        max_length=15,
+        unique=True,
+        null=True,
+        blank=True,
+        help_text="Optional; normalized when set, e.g. 254712345678",
+    )
     email = models.EmailField(max_length=254, unique=True, null=True, blank=True)
     default_delivery_area = models.CharField(max_length=80, blank=True)
     default_address = models.CharField(max_length=300, blank=True)
@@ -48,10 +54,10 @@ class User(AbstractBaseUser, PermissionsMixin):
     objects = UserManager()
 
     USERNAME_FIELD = "phone"
-    REQUIRED_FIELDS = ["name"]
+    REQUIRED_FIELDS = ["name", "email"]
 
     def __str__(self):
-        return f"{self.name} ({self.phone})"
+        return f"{self.name} ({self.phone})" if self.phone else self.name
 
     def save(self, *args, **kwargs):
         if self.email is not None:

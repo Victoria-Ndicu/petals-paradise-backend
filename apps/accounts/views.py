@@ -103,7 +103,7 @@ class SocialLoginView(APIView):
     """Sign in or sign up with a Google/Apple ID token.
 
     - Known provider identity  -> sign in.
-    - New identity             -> create a customer (phone required) and sign in.
+    - New identity             -> create a customer and sign in; phone is optional.
     - Email already belongs to a password account -> 409. We never auto-link on email:
       our emails are not verified, so doing so would allow account pre-hijacking.
     """
@@ -128,21 +128,14 @@ class SocialLoginView(APIView):
 
         # --- first time: register ---
         raw_phone = (data.get("phone") or "").strip()
-        if not raw_phone:
-            raise ApiError(
-                "PHONE_REQUIRED",
-                "Add your phone number to finish creating your account.",
-                status.HTTP_400_BAD_REQUEST,
-                fields={"phone": "Enter your Kenyan phone number."},
-            )
-        phone = normalize_ke_phone(raw_phone)
-        if not phone:
+        phone = normalize_ke_phone(raw_phone) if raw_phone else None
+        if raw_phone and not phone:
             raise ApiError(
                 "VALIDATION_ERROR",
                 "Please review the highlighted fields.",
                 fields={"phone": "Enter a valid Kenyan phone number."},
             )
-        if User.objects.filter(phone=phone).exists():
+        if phone and User.objects.filter(phone=phone).exists():
             raise ApiError(
                 "VALIDATION_ERROR",
                 "Please review the highlighted fields.",

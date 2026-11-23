@@ -82,6 +82,10 @@ Customer: `POST auth/logout`, `POST auth/social/{provider}/link`, `GET/PATCH me`
 `POST orders/{id}/cancel`, `GET me/orders`. Staff: `admin/orders`, `admin/orders/{id}`,
 `admin/orders/{id}/status`, `admin/inquiries`, `admin/inquiries/{id}`.
 
+Password sign-up requires an email and password; phone is optional and can be added later via
+`PATCH /me`. Phone login remains available for accounts that have a phone. Checkout still asks
+for the delivery recipient's phone number.
+
 ### What the frontend must do
 
 - Call `GET /auth/csrf` once, then send the `csrftoken` cookie value in an `X-CSRFToken`
@@ -129,9 +133,8 @@ POST /api/v1/auth/social/google   {"idToken": "...", "nonce": "...", "phone": "0
 POST /api/v1/auth/social/apple    {"idToken": "...", "name": "Jane Doe", "phone": "0712345678"}
 ```
 
-- Returning user -> `200` and a session. New user -> needs `phone` (our unique customer key):
-  without it the API answers `400 PHONE_REQUIRED`, so the SPA should show a phone field and
-  re-send the same token with `phone`. Success is `201`.
+- Returning user -> `200` and a session. New user -> phone is optional; the account is created
+  with `phone: null` if it is omitted. Success is `201`.
 - Apple only gives the name to the browser (not in the token), so pass it as `name`.
 - `nonce` is optional but recommended: send the same value you gave the provider.
 - Email already used by a password account -> `409 ACCOUNT_EXISTS`. We never auto-link on
