@@ -28,7 +28,7 @@ class ProductSerializer(serializers.ModelSerializer):
     categoryName = serializers.CharField(source="category.name", read_only=True)
     isSeasonal = serializers.BooleanField(source="is_seasonal", read_only=True)
     seasonNote = serializers.CharField(source="season_note", read_only=True)
-    image = serializers.CharField(source="image_url", read_only=True)
+    image = serializers.CharField(source="image_src", read_only=True)
     imageAlt = serializers.CharField(source="image_alt", read_only=True)
     stockPolicy = serializers.CharField(source="stock_policy", read_only=True)
     variants = serializers.SerializerMethodField()

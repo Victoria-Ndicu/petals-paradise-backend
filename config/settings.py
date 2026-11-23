@@ -99,12 +99,16 @@ if not DEBUG and not DATABASE_URL:
 DATABASES = {
     "default": dj_database_url.config(
         default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
-        conn_max_age=600,
+        conn_max_age=60,
         conn_health_checks=True,
+        ssl_require=not DEBUG,
     )
 }
 if not DEBUG and DATABASES["default"]["ENGINE"] == "django.db.backends.sqlite3":
     raise RuntimeError("A persistent database is required when DEBUG is off; SQLite is for local development only.")
+if DATABASES["default"]["ENGINE"] == "django.db.backends.postgresql":
+    DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = True
+    DATABASES["default"].setdefault("OPTIONS", {})["connect_timeout"] = 10
 
 # --- Cache (used by DRF throttling) ---------------------------------------
 # Throttle counters must be shared across gunicorn workers, so per-process
@@ -192,10 +196,44 @@ USE_TZ = True
 # --- Static files ---------------------------------------------------------
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+_storage_config = {
+    "bucket_name": os.environ.get("STORAGE_BUCKET", ""),
+    "endpoint_url": os.environ.get("STORAGE_ENDPOINT_URL", ""),
+    "access_key": os.environ.get("STORAGE_ACCESS_KEY_ID", ""),
+    "secret_key": os.environ.get("STORAGE_SECRET_ACCESS_KEY", ""),
+    "custom_domain": os.environ.get("STORAGE_PUBLIC_BASE", ""),
+}
+if any(_storage_config.values()) and not all(_storage_config.values()):
+    raise RuntimeError("All STORAGE_* settings are required when configuring object storage.")
+if not DEBUG and not all(_storage_config.values()):
+    raise RuntimeError("All STORAGE_* settings are required when DEBUG is off.")
+
 STORAGES = {
-    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "default": (
+        {
+            "BACKEND": "storages.backends.s3.S3Storage",
+            "OPTIONS": {
+                "bucket_name": _storage_config["bucket_name"],
+                "endpoint_url": _storage_config["endpoint_url"],
+                "access_key": _storage_config["access_key"],
+                "secret_key": _storage_config["secret_key"],
+                "region_name": os.environ.get("STORAGE_REGION", "us-east-2"),
+                "addressing_style": "path",
+                "signature_version": "s3v4",
+                "custom_domain": _storage_config["custom_domain"],
+                "querystring_auth": False,
+                "file_overwrite": False,
+                "default_acl": None,
+            },
+        }
+        if all(_storage_config.values())
+        else {"BACKEND": "django.core.files.storage.FileSystemStorage"}
+    ),
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
 }
+
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
+SITE_URL = (os.environ.get("SITE_URL") or FRONTEND_URL).rstrip("/")
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

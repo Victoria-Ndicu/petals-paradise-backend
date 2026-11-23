@@ -2,7 +2,9 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.db.models import Min, Prefetch, Q
+from django.utils.decorators import method_decorator
 from django.utils import timezone
+from django.views.decorators.cache import cache_control
 from rest_framework import generics
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -11,6 +13,9 @@ from zoneinfo import ZoneInfo
 
 from .models import BlockedDate, DeliveryOption, DeliverySlot, Product, ProductPresentation, ProductVariant
 from .serializers import DeliveryOptionSerializer, DeliverySlotSerializer, ProductSerializer
+
+
+catalogue_cache = cache_control(public=True, max_age=30, s_maxage=60, stale_while_revalidate=300)
 
 
 def published_products():
@@ -28,6 +33,7 @@ def published_products():
     )
 
 
+@method_decorator(catalogue_cache, name="dispatch")
 class ProductListView(generics.ListAPIView):
     permission_classes = [AllowAny]
     serializer_class = ProductSerializer
@@ -55,6 +61,7 @@ class ProductListView(generics.ListAPIView):
         return qs.order_by(order, "id")
 
 
+@method_decorator(catalogue_cache, name="dispatch")
 class ProductDetailView(generics.RetrieveAPIView):
     permission_classes = [AllowAny]
     serializer_class = ProductSerializer
@@ -65,6 +72,7 @@ class ProductDetailView(generics.RetrieveAPIView):
         return published_products()
 
 
+@method_decorator(catalogue_cache, name="dispatch")
 class DeliveryOptionsView(APIView):
     """Areas, fees, time slots, blocked dates and lead-time rules."""
 

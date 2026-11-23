@@ -37,6 +37,40 @@ python manage.py runserver
 Do not use these values in production; production requires a configured
 `SECRET_KEY` and persistent `DATABASE_URL`.
 
+### Neon, R2, CDN, and Brevo catalogue setup
+
+- For Neon, configure `DATABASE_URL` with the pooled connection string for app traffic.
+  Keep `conn_health_checks`, disable server-side cursors, and use the direct connection string
+  as `MIGRATION_DATABASE_URL` for deploy-time migrations. The build uses the direct URL for
+  migrations and cache-table creation; the running service continues using `DATABASE_URL`.
+- Product images can be uploaded in Django admin. Configure `STORAGE_BUCKET`,
+  `STORAGE_ENDPOINT_URL`, `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`, and
+  `STORAGE_PUBLIC_BASE` to enable Neon Buckets storage; they are required outside `DEBUG` so
+  production uploads are not silently stored on ephemeral local disk. `STORAGE_REGION` defaults to
+  `us-east-2`; set it to the region shown in the Neon console. The S3 client uses path-style
+  addressing and SigV4. Local development uses Django's filesystem storage. Existing `image_url`
+  values remain supported. Set `STORAGE_PUBLIC_BASE` to the bucket's public base URL, including
+  its bucket path if Neon requires it.
+  Apply the image field migration with `python manage.py migrate` (it runs automatically in the
+  Render build).
+- Public product and delivery-option responses include `Cache-Control` headers for short-lived
+  CDN caching. Cloudflare does not cache JSON by default: add Cache Rules for `/api/v1/products*`
+  and `/api/v1/delivery-options`, make them eligible for cache, and respect origin cache headers.
+  Product availability may be cached for up to 60 seconds; checkout still validates stock and
+  prices against the database.
+- Set `BREVO_API_KEY` and `SITE_URL` to enable one-way product sync after catalogue saves and
+  publish/unpublish/retire actions. Sync failures are logged and do not block admin saves. Existing
+products are not automatically backfilled. Run this once from `python manage.py shell` to sync
+published products:
+
+```python
+from apps.catalogue.brevo import sync_product
+from apps.catalogue.models import Product
+
+for product in Product.objects.filter(status=Product.Status.PUBLISHED).iterator():
+    sync_product(product)
+```
+
 ## Deploy on Render
 
 1. Push this folder to a GitHub/GitLab repo.
@@ -46,11 +80,16 @@ Do not use these values in production; production requires a configured
    - `petals-order-sweeper` cron job (every 5 minutes: cancels orders still awaiting payment
      past their deadline and releases reserved stock)
 3. Fill in the prompted values: `CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS` (your
-   storefront origin), and `GOOGLE_CLIENT_IDS` / `APPLE_CLIENT_IDS` if you want social sign-in.
-   The Blueprint connects `DATABASE_URL` to the `petals-db` Postgres database and applies
+   storefront origin), `STORAGE_*` values for persistent product images, and `GOOGLE_CLIENT_IDS` /
+   `APPLE_CLIENT_IDS` if you want social sign-in. Configure SMTP and Brevo values if using those
+   features. The Blueprint connects `DATABASE_URL` to the `petals-db` Postgres database and applies
    migrations during the build. If you already created the web service outside this Blueprint,
    configure its `DATABASE_URL` to use the `petals-db` connection string; production now refuses
    to start against SQLite.
+   The current Blueprint still selects Render Postgres by default. To move an existing deployment
+   to Neon, copy and verify the database first, then configure the web and cron services to use
+   Neon's pooled URL as `DATABASE_URL`, and set the web service's `MIGRATION_DATABASE_URL` to
+   Neon's direct URL. Keep the old database until the cutover is verified.
 4. Create the first staff user: Render dashboard > `petals-api` > **Shell**, then
    `python manage.py createsuperuser`. Staff log in at `/admin/`.
 5. Check plan names and prices in `render.yaml` against Render's current pricing. Do not use

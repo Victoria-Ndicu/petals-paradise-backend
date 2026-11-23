@@ -54,6 +54,7 @@ class Product(models.Model):
     is_seasonal = models.BooleanField(default=False)
     season_note = models.CharField(max_length=160, blank=True)
 
+    image = models.ImageField(upload_to="products/", blank=True)
     image_url = models.URLField(max_length=500, blank=True)
     image_alt = models.CharField(max_length=200, blank=True)
 
@@ -70,6 +71,10 @@ class Product(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def image_src(self) -> str:
+        return self.image.url if self.image else self.image_url
 
     @property
     def is_orderable(self) -> bool:

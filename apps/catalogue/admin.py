@@ -1,7 +1,9 @@
 from django.contrib import admin
+from django.db import transaction
 
 from apps.core.models import record_audit
 
+from .brevo import sync_product
 from .models import (
     BlockedDate,
     Category,
@@ -56,6 +58,7 @@ class ProductAdmin(AuditedAdmin):
             p.status = Product.Status.PUBLISHED
             p.save(update_fields=["status", "updated_at"])
             record_audit(request.user, "product.published", p)
+            transaction.on_commit(lambda p=p: sync_product(p))
 
     @admin.action(description="Unpublish selected products (back to draft)")
     def unpublish(self, request, queryset):
@@ -63,6 +66,7 @@ class ProductAdmin(AuditedAdmin):
             p.status = Product.Status.DRAFT
             p.save(update_fields=["status", "updated_at"])
             record_audit(request.user, "product.unpublished", p)
+            transaction.on_commit(lambda p=p: sync_product(p))
 
     @admin.action(description="Retire selected products")
     def retire(self, request, queryset):
@@ -70,11 +74,16 @@ class ProductAdmin(AuditedAdmin):
             p.status = Product.Status.RETIRED
             p.save(update_fields=["status", "updated_at"])
             record_audit(request.user, "product.retired", p)
+            transaction.on_commit(lambda p=p: sync_product(p))
 
     def save_formset(self, request, form, formset, change):
         super().save_formset(request, form, formset, change)
         if formset.has_changed():
             record_audit(request.user, "product.variants_changed", form.instance)
+
+    def save_related(self, request, form, formsets, change):
+        super().save_related(request, form, formsets, change)
+        transaction.on_commit(lambda: sync_product(form.instance))
 
 
 @admin.register(Category)
