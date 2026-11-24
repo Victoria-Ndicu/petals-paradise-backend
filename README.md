@@ -97,6 +97,11 @@ API, avoiding SMTP connectivity restrictions. `DEFAULT_FROM_EMAIL` must be a sen
 Brevo; use a valid mailbox, for example `Petals Paradise <orders@your-verified-domain>`. The same
 `BREVO_API_KEY` also enables catalogue sync.
 
+Set `INQUIRY_ALERT_EMAILS` to the staff inboxes that should receive submitted inquiry details
+(comma-separated). If unset, inquiry alerts go to `ORDER_ALERT_EMAILS`. Configure it as
+`ndicuvictoria@gmail.com` or the appropriate business inbox in Render if it should receive inquiry
+notifications.
+
 Without a Brevo API key, email falls back to Django SMTP using `EMAIL_HOST`, `EMAIL_PORT`,
 `EMAIL_USE_TLS`, `EMAIL_HOST_USER`, and `EMAIL_HOST_PASSWORD`. That fallback can be used locally
 or with a host that permits outbound SMTP. To test the Brevo API locally, configure the three

@@ -66,6 +66,9 @@ services:
       # Optional admin order-alert recipients; customer confirmations use the account email.
       - key: ORDER_ALERT_EMAILS
         sync: false
+      # Staff inboxes for public inquiry alerts; defaults to ORDER_ALERT_EMAILS when unset.
+      - key: INQUIRY_ALERT_EMAILS
+        sync: false
       # Neon Buckets image storage is required in production; Brevo sync is optional.
       - key: STORAGE_BUCKET
         sync: false

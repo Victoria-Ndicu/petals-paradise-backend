@@ -168,6 +168,7 @@ EMAIL_VERIFICATION_TIMEOUT_SECONDS = 60 * 60 * 24
 
 # --- Order alerts --------------------------------------------------------
 ORDER_ALERT_EMAILS = env_list("ORDER_ALERT_EMAILS")
+INQUIRY_ALERT_EMAILS = env_list("INQUIRY_ALERT_EMAILS")
 
 # --- Sessions / cookies ---------------------------------------------------
 SESSION_COOKIE_HTTPONLY = True
