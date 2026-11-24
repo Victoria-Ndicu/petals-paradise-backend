@@ -1,13 +1,8 @@
-import logging
-import threading
-
 from django.conf import settings
 
-from apps.core.email import send_transactional_email
+from apps.core.email import send_transactional_email_async
 
 from .models import Order
-
-logger = logging.getLogger(__name__)
 
 
 def _format_admin_order(order: Order) -> str:
@@ -54,40 +49,6 @@ def _format_customer_order(order: Order) -> str:
     return "\n".join(lines)
 
 
-def _send_email(recipient: str, subject: str, body: str, *, alert_type: str) -> None:
-    try:
-        send_transactional_email(subject, body, None, [recipient])
-    except Exception:
-        logger.exception("%s email failed", alert_type)
-
-
-def _send_alerts(
-    admin_recipients: list[str],
-    customer_email: str,
-    order_reference: str,
-    admin_body: str,
-    customer_body: str,
-) -> None:
-    if admin_recipients:
-        try:
-            send_transactional_email(
-                f"New order {order_reference}",
-                admin_body,
-                None,
-                admin_recipients,
-            )
-        except Exception:
-            logger.exception("Order alert email failed for order %s", order_reference)
-
-    if customer_email:
-        _send_email(
-            customer_email,
-            f"We received your order {order_reference}",
-            customer_body,
-            alert_type=f"Customer confirmation for order {order_reference}",
-        )
-
-
 def notify_new_order(order: Order) -> None:
     """Email admins and the customer after the order transaction commits."""
     admin_recipients = settings.ORDER_ALERT_EMAILS
@@ -95,14 +56,37 @@ def notify_new_order(order: Order) -> None:
     if not admin_recipients and not customer_email:
         return
 
-    try:
-        admin_body = _format_admin_order(order) if admin_recipients else ""
-        customer_body = _format_customer_order(order) if customer_email else ""
-        thread = threading.Thread(
-            target=_send_alerts,
-            args=(admin_recipients, customer_email, order.reference, admin_body, customer_body),
-            daemon=True,
+    if admin_recipients:
+        send_transactional_email_async(
+            f"New order {order.reference}",
+            _format_admin_order(order),
+            admin_recipients,
+            context=f"admin order alert {order.reference}",
         )
-        thread.start()
-    except Exception:
-        logger.exception("Could not start email notifications for order %s", order.reference)
+    if customer_email:
+        send_transactional_email_async(
+            f"We received your order {order.reference}",
+            _format_customer_order(order),
+            [customer_email],
+            context=f"customer order confirmation {order.reference}",
+        )
+
+
+def notify_order_confirmed(order: Order) -> None:
+    customer_email = order.customer.email or ""
+    if not customer_email:
+        return
+
+    send_transactional_email_async(
+        f"Payment confirmed for order {order.reference}",
+        (
+            f"Hello {order.customer.name},\n\n"
+            f"Payment for order {order.reference} has been confirmed. "
+            "We are preparing your order and will keep you updated.\n\n"
+            f"Delivery: {order.delivery_date:%d %b %Y}, {order.delivery_slot_label}\n"
+            f"Total: {order.currency} {order.total_kes:,}\n\n"
+            "Thank you for choosing Petals Paradise."
+        ),
+        [customer_email],
+        context=f"payment confirmation {order.reference}",
+    )

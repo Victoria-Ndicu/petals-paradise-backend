@@ -1,4 +1,4 @@
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import requests
 from django.test import SimpleTestCase, override_settings
@@ -7,6 +7,7 @@ from apps.core.email import (
     BREVO_TRANSACTIONAL_EMAIL_URL,
     EmailDeliveryError,
     send_transactional_email,
+    send_transactional_email_async,
 )
 
 
@@ -70,3 +71,32 @@ class BrevoEmailDeliveryTests(SimpleTestCase):
             ["to@example.test"],
             fail_silently=False,
         )
+
+    @patch("apps.core.email.send_transactional_email", return_value=1)
+    @patch("apps.core.email.threading.Thread")
+    def test_async_delivery_uses_shared_transactional_sender(self, thread, send_email):
+        send_transactional_email_async(
+            "Subject",
+            "Body",
+            ["to@example.test"],
+            context="test notification",
+        )
+
+        thread.assert_called_once_with(target=ANY, daemon=True)
+        thread.return_value.start.assert_called_once()
+        thread.call_args.kwargs["target"]()
+        send_email.assert_called_once_with("Subject", "Body", None, ["to@example.test"])
+
+    @patch("apps.core.email.send_transactional_email", side_effect=RuntimeError("provider unavailable"))
+    @patch("apps.core.email.threading.Thread")
+    def test_async_delivery_logs_provider_failure(self, thread, send_email):
+        with self.assertLogs("apps.core.email", level="ERROR"):
+            send_transactional_email_async(
+                "Subject",
+                "Body",
+                ["to@example.test"],
+                context="test notification",
+            )
+            thread.call_args.kwargs["target"]()
+
+        send_email.assert_called_once()

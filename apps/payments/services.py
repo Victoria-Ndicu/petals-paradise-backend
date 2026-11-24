@@ -17,8 +17,8 @@ from django.utils import timezone
 from rest_framework import status
 
 from apps.core.exceptions import ApiError
-from apps.core.models import Notification, enqueue_notification
 from apps.orders.models import Order
+from apps.orders.notifications import notify_order_confirmed
 from apps.orders.services import transition_order
 
 from . import daraja
@@ -160,27 +160,10 @@ def _mark_paid(payment: Payment, receipt: str = "") -> None:
     payment.failure_reason = ""
     payment.save()
 
-    order = Order.objects.select_for_update().get(pk=payment.order_id)
+    order = Order.objects.select_for_update().select_related("customer").get(pk=payment.order_id)
     if order.status == Order.Status.PENDING_PAYMENT:
         transition_order(order, Order.Status.CONFIRMED, actor=None, note="M-Pesa payment verified")
-        customer = order.customer
-        if customer.phone:
-            for channel in (Notification.Channel.SMS, Notification.Channel.WHATSAPP):
-                enqueue_notification(
-                    channel=channel,
-                    kind="order_confirmed",
-                    recipient=customer.phone,
-                    related_type="order",
-                    related_id=order.pk,
-                )
-        if customer.email:
-            enqueue_notification(
-                channel=Notification.Channel.EMAIL,
-                kind="order_confirmed",
-                recipient=customer.email,
-                related_type="order",
-                related_id=order.pk,
-            )
+        transaction.on_commit(lambda order=order: notify_order_confirmed(order))
     elif order.status == Order.Status.CANCELLED:
         # Customer paid after we cancelled (late callback): never lose the money silently.
         payment.needs_review = True

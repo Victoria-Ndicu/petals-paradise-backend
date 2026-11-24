@@ -81,21 +81,21 @@ for product in Product.objects.filter(status=Product.Status.PUBLISHED).iterator(
     sync_product(product)
 ```
 
-### New-order alerts
+### Transactional email alerts
 
-The backend sends email after a new order transaction commits. Admins receive an order alert at
-the comma-separated recipients in `ORDER_ALERT_EMAILS`. Customers receive a separate confirmation
-at the email on their account, when one is set. The customer message says the order was received
-and is awaiting payment confirmation; it does not claim that payment was received. Messages are
-sent in a background thread so email delivery does not hold up checkout. An idempotent retry does
-not send duplicate messages.
+All transactional email uses the shared `send_transactional_email` delivery helper. Admins receive
+new-order alerts at the comma-separated recipients in `ORDER_ALERT_EMAILS`. Customers receive an
+order-received message, a payment-confirmed message after the order is confirmed, and account
+verification messages. Inquiry submissions require an email address and receive an acknowledgement.
+Order, inquiry, and payment messages are sent in background threads so delivery does not hold up the
+request; verification delivery remains synchronous so signup can report a delivery failure. Email
+delivery failures are logged and do not discard an order or inquiry that has already been saved.
 
 Configure `ORDER_ALERT_EMAILS`, `BREVO_API_KEY`, and `DEFAULT_FROM_EMAIL` on the API service in
-Render. When `BREVO_API_KEY` is configured, order alerts, customer confirmations, and account
-verification emails use Brevo's HTTPS transactional-email API, avoiding SMTP connectivity
-restrictions. `DEFAULT_FROM_EMAIL` must be a sender verified in Brevo; use a valid mailbox, for
-example `Petals Paradise <orders@your-verified-domain>`. The same `BREVO_API_KEY` also enables
-catalogue sync.
+Render. When `BREVO_API_KEY` is configured, these messages use Brevo's HTTPS transactional-email
+API, avoiding SMTP connectivity restrictions. `DEFAULT_FROM_EMAIL` must be a sender verified in
+Brevo; use a valid mailbox, for example `Petals Paradise <orders@your-verified-domain>`. The same
+`BREVO_API_KEY` also enables catalogue sync.
 
 Without a Brevo API key, email falls back to Django SMTP using `EMAIL_HOST`, `EMAIL_PORT`,
 `EMAIL_USE_TLS`, `EMAIL_HOST_USER`, and `EMAIL_HOST_PASSWORD`. That fallback can be used locally
@@ -162,6 +162,10 @@ Password sign-up requires an email and password; phone is optional and can be ad
 Phone login remains available for accounts that have a phone. Checkout still asks for the
 delivery recipient's phone number.
 
+`POST /inquiries` requires `name`, `phone`, `email`, and `occasion`; `preferredContact` and
+`details` are optional. The acknowledgement is sent to the submitted email. The phone number and
+preferred contact remain available to staff for follow-up.
+
 ### What the frontend must do
 
 - Call `GET /auth/csrf` once, then send the `csrftoken` cookie value in an `X-CSRFToken`
@@ -184,7 +188,7 @@ payment-agnostic:
 - Orders start as `pending_payment` and carry `totalKes` (server-computed) and `reference`.
 - `apps.orders.services.confirm_order_payment(order_id, actor=None, note=...)` is the single
   function that means "this order is paid". It is idempotent, moves the order to `confirmed`,
-  and queues the confirmation notifications. It returns `"confirmed"`, `"already"` or
+  and schedules the customer payment-confirmation email after commit. It returns `"confirmed"`, `"already"` or
   `"cancelled"` (the order was cancelled first: the payments service must handle the refund).
   Staff use it today via `POST /api/v1/admin/orders/{id}/status {"status": "confirmed"}`.
 - Orders still awaiting payment are cancelled and their reserved stock released after
@@ -231,21 +235,17 @@ POST /api/v1/auth/social/apple    {"idToken": "...", "name": "Jane Doe", "phone"
 
 ### Email delivery configuration
 
-Email verification uses Django SMTP. Configure `FRONTEND_URL` to the storefront origin and set
-`EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`, and
-`DEFAULT_FROM_EMAIL` in Render. For local `DEBUG=true` development without an SMTP host, messages
-are printed to the runserver console. For production, use an SMTP provider with a free tier for
-testing or low-volume transactional mail; never put SMTP credentials in source control. For
-example, Gmail SMTP uses `smtp.gmail.com:587` with TLS and an app password (not the Google
-account password); check the provider's current sending limits and sender requirements.
+Configure `FRONTEND_URL` to the storefront origin and set `BREVO_API_KEY` and a verified
+`DEFAULT_FROM_EMAIL` in Render. Without a Brevo API key, the shared email helper falls back to
+Django SMTP using `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, and
+`EMAIL_USE_TLS`. Never put email credentials in source control.
 
 ## Known gaps / decisions still needed (from the requirements, Phase 0)
 
 - Placeholder seed data only: real variant labels, prices, delivery zones/fees, lead times,
   slots and blocked dates must be entered by the business.
 - Password reset is not implemented. Email verification links expire after 24 hours.
-- Notifications are recorded as `queued` and are never marked `sent`: no SMS/WhatsApp/email
-  provider is connected yet (Phase 2).
+- SMS and WhatsApp delivery are not connected; automated customer notifications use email.
 - No online payments yet and no refund handling (separate payments repo).
 - Guest checkout is intentionally out of scope.
 - 71 automated tests run on SQLite. Run them against Postgres in CI before launch.

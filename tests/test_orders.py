@@ -6,7 +6,6 @@ from apps.accounts.models import User
 from apps.catalogue.models import BlockedDate, ProductVariant
 from django.utils import timezone
 
-from apps.core.models import Notification
 from apps.orders.models import Order
 from apps.orders.services import confirm_order_payment, expire_stale_orders
 
@@ -77,6 +76,18 @@ class OrderCreationTests(BaseTest):
     def test_requires_authentication(self):
         r = self.client.post("/api/v1/orders", self.order_payload(), format="json", headers={"Idempotency-Key": idem()})
         self.assertEqual(r.status_code, 401)
+
+    def test_new_email_account_without_profile_phone_can_place_order(self):
+        customer = User.objects.create_user(
+            phone=None,
+            email="new-customer@example.com",
+            name="New Customer",
+        )
+
+        response = self.place_order(user=customer)
+
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(Order.objects.get(pk=response.data["id"]).customer, customer)
 
     def test_requires_idempotency_key(self):
         self.login(self.customer)
@@ -224,11 +235,13 @@ class OrderAccessAndFulfilmentTests(BaseTest):
     def test_staff_can_confirm_payment_manually_and_it_is_audited_and_notified(self):
         order_id = self.place_order().data["id"]
         self.login(self.staff)
-        r = self.client.post(
-            f"/api/v1/admin/orders/{order_id}/status",
-            {"status": "confirmed", "note": "Paid via till, ref ABC"},
-            format="json",
-        )
+        with patch("apps.orders.services.notify_order_confirmed") as notify:
+            with self.captureOnCommitCallbacks(execute=True) as callbacks:
+                r = self.client.post(
+                    f"/api/v1/admin/orders/{order_id}/status",
+                    {"status": "confirmed", "note": "Paid via till, ref ABC"},
+                    format="json",
+                )
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(r.data["status"], "confirmed")
         self.assertIsNotNone(r.data["paidAt"])
@@ -236,7 +249,8 @@ class OrderAccessAndFulfilmentTests(BaseTest):
 
         event = OrderStatusEvent.objects.filter(order_id=order_id).latest("created_at")
         self.assertEqual((event.to_status, event.actor_id, event.note), ("confirmed", self.staff.pk, "Paid via till, ref ABC"))
-        self.assertEqual(Notification.objects.filter(kind="order_confirmed", status="queued").count(), 3)
+        self.assertEqual(len(callbacks), 1)
+        notify.assert_called_once()
         from apps.core.models import AuditEvent
 
         self.assertTrue(AuditEvent.objects.filter(action="order.status_changed").exists())
@@ -249,24 +263,27 @@ class OrderAccessAndFulfilmentTests(BaseTest):
 
     def test_confirm_order_payment_is_idempotent_and_never_revives_cancelled_orders(self):
         order_id = self.place_order().data["id"]
-        self.assertEqual(confirm_order_payment(order_id), "confirmed")
-        self.assertEqual(confirm_order_payment(order_id), "already")
-        self.assertEqual(Notification.objects.filter(kind="order_confirmed").count(), 3)  # not doubled
+        with patch("apps.orders.services.notify_order_confirmed") as notify:
+            with self.captureOnCommitCallbacks(execute=True) as callbacks:
+                self.assertEqual(confirm_order_payment(order_id), "confirmed")
+                self.assertEqual(confirm_order_payment(order_id), "already")
+        self.assertEqual(len(callbacks), 1)
+        notify.assert_called_once()
         cancelled = self.place_order(user=self.other).data["id"]
         Order.objects.filter(pk=cancelled).update(status=Order.Status.CANCELLED)
         self.assertEqual(confirm_order_payment(cancelled), "cancelled")
         self.assertEqual(Order.objects.get(pk=cancelled).status, "cancelled")
 
-    def test_confirmation_does_not_queue_phone_notifications_without_account_phone(self):
+    def test_confirmation_notifies_email_only_for_account_without_profile_phone(self):
         customer = User.objects.create_user(
             None, self.PASSWORD, name="Email Customer", email="email@example.com"
         )
         order_id = self.place_order(user=customer).data["id"]
-        self.assertEqual(confirm_order_payment(order_id), "confirmed")
-        notifications = Notification.objects.filter(kind="order_confirmed")
-        self.assertEqual(notifications.count(), 1)
-        self.assertEqual(notifications.get().channel, Notification.Channel.EMAIL)
-        self.assertEqual(notifications.get().recipient, customer.email)
+        with patch("apps.orders.services.notify_order_confirmed") as notify:
+            with self.captureOnCommitCallbacks(execute=True) as callbacks:
+                self.assertEqual(confirm_order_payment(order_id), "confirmed")
+        self.assertEqual(len(callbacks), 1)
+        self.assertEqual(notify.call_args.args[0].customer.email, customer.email)
 
     def test_expired_unpaid_orders_are_cancelled_and_stock_released(self):
         key = idem()

@@ -27,6 +27,7 @@ class Inquiry(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=120)
     phone = models.CharField(max_length=15)
+    email = models.EmailField(max_length=254, blank=True, null=True)
     occasion = models.CharField(max_length=30, choices=Occasion.choices)
     preferred_contact = models.CharField(max_length=10, choices=Channel.choices, default=Channel.WHATSAPP)
     details = models.TextField(blank=True, max_length=2000)

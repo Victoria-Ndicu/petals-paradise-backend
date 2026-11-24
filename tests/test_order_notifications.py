@@ -3,7 +3,7 @@ from unittest.mock import patch
 from django.test import override_settings
 
 from apps.orders.models import Order
-from apps.orders.notifications import _format_admin_order, _format_customer_order, _send_alerts
+from apps.orders.notifications import _format_admin_order, _format_customer_order, notify_new_order, notify_order_confirmed
 
 from .base import BaseTest
 
@@ -34,27 +34,25 @@ class OrderNotificationTests(BaseTest):
         self.assertIn("- 2 x Roses (Small, Bouquet)", message)
 
     @override_settings(ORDER_ALERT_EMAILS=["staff1@example.test", "staff2@example.test"])
-    def test_sends_separate_admin_and_customer_emails(self):
-        with patch("apps.orders.notifications.send_transactional_email") as send_email:
-            _send_alerts(
-                ["staff1@example.test", "staff2@example.test"],
-                "jane@example.com",
-                "PP-TEST",
-                "Admin order details",
-                "Customer order confirmation",
-            )
+    def test_new_order_admin_and_customer_messages_use_shared_email_delivery(self):
+        response = self.place_order()
+        order = Order.objects.select_related("customer").prefetch_related("items").get(pk=response.data["id"])
+
+        with patch("apps.orders.notifications.send_transactional_email_async") as send_email:
+            notify_new_order(order)
 
         self.assertEqual(send_email.call_count, 2)
-        self.assertEqual(send_email.call_args_list[0].args[1], "Admin order details")
-        self.assertEqual(send_email.call_args_list[0].args[3], ["staff1@example.test", "staff2@example.test"])
-        self.assertEqual(send_email.call_args_list[1].args[0], "We received your order PP-TEST")
-        self.assertEqual(send_email.call_args_list[1].args[3], ["jane@example.com"])
-        self.assertEqual(send_email.call_args_list[1].args[1], "Customer order confirmation")
+        self.assertEqual(send_email.call_args_list[0].args[2], ["staff1@example.test", "staff2@example.test"])
+        self.assertEqual(send_email.call_args_list[1].args[0], f"We received your order {order.reference}")
+        self.assertEqual(send_email.call_args_list[1].args[2], ["jane@example.com"])
 
-    def test_email_failure_is_logged_and_does_not_raise(self):
-        with patch(
-            "apps.orders.notifications.send_transactional_email",
-            side_effect=RuntimeError("email API unavailable"),
-        ):
-            with self.assertLogs("apps.orders.notifications", level="ERROR"):
-                _send_alerts(["staff@example.test"], "jane@example.com", "PP-TEST", "Admin", "Customer")
+    def test_payment_confirmation_uses_shared_email_delivery(self):
+        response = self.place_order()
+        order = Order.objects.select_related("customer").get(pk=response.data["id"])
+
+        with patch("apps.orders.notifications.send_transactional_email_async") as send_email:
+            notify_order_confirmed(order)
+
+        send_email.assert_called_once()
+        self.assertEqual(send_email.call_args.args[0], f"Payment confirmed for order {order.reference}")
+        self.assertEqual(send_email.call_args.args[2], ["jane@example.com"])

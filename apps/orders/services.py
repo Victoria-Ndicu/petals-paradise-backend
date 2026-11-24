@@ -14,10 +14,10 @@ from rest_framework import status
 
 from apps.catalogue.models import BlockedDate, DeliveryOption, DeliverySlot, Product, ProductPresentation, ProductVariant
 from apps.core.exceptions import ApiError
-from apps.core.models import Notification, enqueue_notification, record_audit
+from apps.core.models import record_audit
 
 from .models import Order, OrderItem, OrderStatusEvent
-from .notifications import notify_new_order
+from .notifications import notify_new_order, notify_order_confirmed
 
 logger = logging.getLogger(__name__)
 
@@ -116,24 +116,7 @@ def confirm_order_payment(order_id, *, actor=None, note: str = "Payment confirme
         if order.status != Order.Status.PENDING_PAYMENT:
             return "already"
         transition_order(order, Order.Status.CONFIRMED, actor=actor, note=note)
-        customer = order.customer
-        if customer.phone:
-            for channel in (Notification.Channel.SMS, Notification.Channel.WHATSAPP):
-                enqueue_notification(
-                    channel=channel,
-                    kind="order_confirmed",
-                    recipient=customer.phone,
-                    related_type="order",
-                    related_id=order.pk,
-                )
-        if customer.email:
-            enqueue_notification(
-                channel=Notification.Channel.EMAIL,
-                kind="order_confirmed",
-                recipient=customer.email,
-                related_type="order",
-                related_id=order.pk,
-            )
+        transaction.on_commit(lambda order=order: notify_order_confirmed(order))
         return "confirmed"
 
 

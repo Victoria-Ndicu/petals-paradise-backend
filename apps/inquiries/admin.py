@@ -7,11 +7,11 @@ from .models import Inquiry
 
 @admin.register(Inquiry)
 class InquiryAdmin(admin.ModelAdmin):
-    list_display = ("created_at", "name", "phone", "occasion", "preferred_contact", "status", "assigned_to")
+    list_display = ("created_at", "name", "phone", "email", "occasion", "preferred_contact", "status", "assigned_to")
     list_filter = ("status", "occasion", "preferred_contact")
-    search_fields = ("name", "phone", "details")
+    search_fields = ("name", "phone", "email", "details")
     list_editable = ("status", "assigned_to")
-    readonly_fields = ("name", "phone", "occasion", "preferred_contact", "details", "created_at", "updated_at")
+    readonly_fields = ("name", "phone", "email", "occasion", "preferred_contact", "details", "created_at", "updated_at")
 
     def has_add_permission(self, request):
         return False

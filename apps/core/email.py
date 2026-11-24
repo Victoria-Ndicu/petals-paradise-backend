@@ -1,4 +1,6 @@
 import html
+import logging
+import threading
 from email.utils import parseaddr
 
 import requests
@@ -8,6 +10,7 @@ from django.core.mail import send_mail
 from django.core.validators import validate_email
 
 BREVO_TRANSACTIONAL_EMAIL_URL = "https://api.brevo.com/v3/smtp/email"
+logger = logging.getLogger(__name__)
 
 
 class EmailDeliveryError(Exception):
@@ -60,3 +63,27 @@ def send_transactional_email(subject: str, message: str, from_email: str | None,
         ) from exc
 
     return len(recipient_list)
+
+
+def send_transactional_email_async(
+    subject: str,
+    message: str,
+    recipient_list: list[str],
+    *,
+    context: str,
+) -> None:
+    if not recipient_list:
+        return
+
+    def send() -> None:
+        try:
+            sent = send_transactional_email(subject, message, None, recipient_list)
+            if sent != len(recipient_list):
+                raise EmailDeliveryError(f"Only {sent} of {len(recipient_list)} email recipients were accepted.")
+        except Exception:
+            logger.exception("Transactional email failed for %s", context)
+
+    try:
+        threading.Thread(target=send, daemon=True).start()
+    except Exception:
+        logger.exception("Could not start transactional email for %s", context)

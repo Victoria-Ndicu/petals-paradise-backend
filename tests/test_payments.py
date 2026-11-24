@@ -4,7 +4,6 @@ from unittest import mock
 from django.core.management import call_command
 from django.utils import timezone
 
-from apps.core.models import Notification
 from apps.orders.models import Order
 from apps.payments import daraja
 from apps.payments.models import Payment
@@ -114,8 +113,12 @@ class PaymentTests(BaseTest):
     # ---- callbacks -------------------------------------------------------
     def test_verified_success_confirms_order_and_exposes_receipt(self):
         self.start_payment()
-        with mock.patch("apps.payments.daraja.stk_query", return_value=daraja.StkQueryResult(0, "ok")):
-            r = self.callback(callback_body())
+        with (
+            mock.patch("apps.payments.daraja.stk_query", return_value=daraja.StkQueryResult(0, "ok")),
+            mock.patch("apps.payments.services.notify_order_confirmed") as notify,
+        ):
+            with self.captureOnCommitCallbacks(execute=True) as callbacks:
+                r = self.callback(callback_body())
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.data, {"ResultCode": 0, "ResultDesc": "Accepted"})
         p = Payment.objects.get()
@@ -126,16 +129,22 @@ class PaymentTests(BaseTest):
         detail = self.client.get(f"/api/v1/orders/{self.order_id}").data
         self.assertEqual(detail["payment"]["status"], "paid")
         self.assertEqual(detail["payment"]["receipt"], "QGR7XYZ123")
-        self.assertEqual(Notification.objects.filter(kind="order_confirmed", status="queued").count(), 3)  # sms, whatsapp, email
+        self.assertEqual(len(callbacks), 1)
+        notify.assert_called_once()
 
     def test_duplicate_callbacks_are_idempotent(self):
         self.start_payment()
-        with mock.patch("apps.payments.daraja.stk_query", return_value=daraja.StkQueryResult(0, "ok")):
-            for _ in range(3):
-                self.assertEqual(self.callback(callback_body()).status_code, 200)
+        with (
+            mock.patch("apps.payments.daraja.stk_query", return_value=daraja.StkQueryResult(0, "ok")),
+            mock.patch("apps.payments.services.notify_order_confirmed") as notify,
+        ):
+            with self.captureOnCommitCallbacks(execute=True) as callbacks:
+                for _ in range(3):
+                    self.assertEqual(self.callback(callback_body()).status_code, 200)
         self.assertEqual(Payment.objects.filter(status="paid").count(), 1)
         self.assertEqual(Order.objects.get(pk=self.order_id).events.filter(to_status="confirmed").count(), 1)
-        self.assertEqual(Notification.objects.filter(kind="order_confirmed").count(), 3)
+        self.assertEqual(len(callbacks), 1)
+        notify.assert_called_once()
 
     def test_late_failure_callback_cannot_undo_paid(self):
         self.start_payment()

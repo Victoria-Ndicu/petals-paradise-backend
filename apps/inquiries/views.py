@@ -1,14 +1,16 @@
 import logging
 
+from django.db import transaction
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAdminUser
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from apps.core.models import Notification, enqueue_notification, record_audit
+from apps.core.models import record_audit
 
 from .models import Inquiry
+from .notifications import notify_inquiry_received
 from .serializers import InquiryCreateSerializer, InquiryReadSerializer
 
 logger = logging.getLogger(__name__)
@@ -33,27 +35,12 @@ class InquiryCreateView(APIView):
         inquiry = Inquiry.objects.create(
             name=data["name"],
             phone=data["phone"],
+            email=data["email"],
             occasion=data["occasion"],
             preferred_contact=data["preferred_contact"],
             details=data["details"],
         )
-        # Acknowledgement is queued (never "sent" until a provider confirms); failure to
-        # queue must not lose the inquiry we already stored.
-        try:
-            channel = (
-                Notification.Channel.WHATSAPP
-                if inquiry.preferred_contact == Inquiry.Channel.WHATSAPP
-                else Notification.Channel.SMS
-            )
-            enqueue_notification(
-                channel=channel,
-                kind="inquiry_received",
-                recipient=inquiry.phone,
-                related_type="inquiry",
-                related_id=inquiry.pk,
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("Could not queue inquiry acknowledgement")
+        transaction.on_commit(lambda: notify_inquiry_received(inquiry))
 
         return Response(
             {"id": str(inquiry.pk), "status": inquiry.status, "createdAt": inquiry.created_at},

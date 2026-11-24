@@ -11,6 +11,7 @@ User = get_user_model()
 class InquiryCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=120)
     phone = serializers.CharField(max_length=20)
+    email = serializers.EmailField(max_length=254)
     occasion = serializers.ChoiceField(choices=Inquiry.Occasion.choices)
     preferred_contact = serializers.ChoiceField(choices=Inquiry.Channel.choices, required=False, default="whatsapp")
     details = serializers.CharField(max_length=2000, required=False, allow_blank=True, default="")
@@ -42,6 +43,9 @@ class InquiryCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError("Enter a valid Kenyan phone number.")
         return phone
 
+    def validate_email(self, value):
+        return value.strip().lower()
+
     def validate_details(self, value):
         return value.strip()
 
@@ -56,6 +60,7 @@ class InquiryReadSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "phone",
+            "email",
             "occasion",
             "occasion_label",
             "preferred_contact",
@@ -66,7 +71,9 @@ class InquiryReadSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "name", "phone", "occasion", "preferred_contact", "details", "created_at", "updated_at"]
+        read_only_fields = [
+            "id", "name", "phone", "email", "occasion", "preferred_contact", "details", "created_at", "updated_at"
+        ]
 
     def validate_assigned_to(self, value):
         if value is not None and not value.is_staff:

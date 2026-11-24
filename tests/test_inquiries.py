@@ -1,8 +1,17 @@
+from unittest.mock import patch
+
 from apps.inquiries.models import Inquiry
 
 from .base import BaseTest
 
-VALID = {"name": "Amina", "phone": "0711000999", "occasion": "wedding", "preferredContact": "whatsapp", "details": "June"}
+VALID = {
+    "name": "Amina",
+    "phone": "0711000999",
+    "email": "Amina@Example.com",
+    "occasion": "wedding",
+    "preferredContact": "whatsapp",
+    "details": "June",
+}
 
 
 class InquiryTests(BaseTest):
@@ -11,6 +20,7 @@ class InquiryTests(BaseTest):
         self.assertEqual(r.status_code, 201, r.content)
         inq = Inquiry.objects.get(pk=r.data["id"])
         self.assertEqual((inq.phone, inq.status, inq.occasion), ("254711000999", "new", "wedding"))
+        self.assertEqual(inq.email, "amina@example.com")
         self.assertEqual(inq.preferred_contact, "whatsapp")
 
     def test_all_current_occasions_accepted(self):
@@ -35,12 +45,24 @@ class InquiryTests(BaseTest):
         self.assertEqual(codes.count(201), 5)
         self.assertIn(429, codes)
 
-    def test_notification_is_queued_not_claimed_sent(self):
-        from apps.core.models import Notification
+    @patch("apps.inquiries.notifications.send_transactional_email_async")
+    def test_acknowledgement_uses_shared_email_delivery(self, send_email):
+        with self.captureOnCommitCallbacks(execute=True) as callbacks:
+            response = self.client.post("/api/v1/inquiries", VALID, format="json")
 
-        self.client.post("/api/v1/inquiries", VALID, format="json")
-        n = Notification.objects.get()
-        self.assertEqual((n.kind, n.status), ("inquiry_received", "queued"))
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(len(callbacks), 1)
+        send_email.assert_called_once()
+        self.assertEqual(send_email.call_args.args[0], "We received your Petals Paradise inquiry")
+        self.assertEqual(send_email.call_args.args[2], ["amina@example.com"])
+        self.assertEqual(send_email.call_args.kwargs["context"], f"inquiry acknowledgement {response.data['id']}")
+
+    def test_email_is_required_for_an_inquiry(self):
+        response = self.client.post("/api/v1/inquiries", {key: value for key, value in VALID.items() if key != "email"}, format="json")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("email", response.data["error"]["fields"])
+        self.assertEqual(Inquiry.objects.count(), 0)
 
     def test_staff_can_list_update_status_and_assign_but_not_edit_customer_fields(self):
         iid = self.client.post("/api/v1/inquiries", VALID, format="json").data["id"]
