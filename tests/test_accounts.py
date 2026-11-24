@@ -9,6 +9,7 @@ from apps.accounts.models import User
 from .base import BaseTest
 
 
+@override_settings(BREVO_API_KEY="")
 class AccountTests(BaseTest):
     def signup(self, **over):
         data = {"name": "New Person", "phone": "0711 222 333", "email": "New@Example.com", "password": "Another-str0ng-pw"}

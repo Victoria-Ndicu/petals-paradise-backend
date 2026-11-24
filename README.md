@@ -90,14 +90,20 @@ and is awaiting payment confirmation; it does not claim that payment was receive
 sent in a background thread so email delivery does not hold up checkout. An idempotent retry does
 not send duplicate messages.
 
-Configure `ORDER_ALERT_EMAILS` and the existing SMTP settings (`EMAIL_HOST`, `EMAIL_PORT`,
-`EMAIL_USE_TLS`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, and `DEFAULT_FROM_EMAIL`) on the API
-service in Render. For Brevo SMTP, use the host, login, and SMTP key shown in your Brevo SMTP
-settings, and verify the sender address. Gmail testing requires an app password, not the account
-password. To test SMTP locally, set the same environment variables and run:
+Configure `ORDER_ALERT_EMAILS`, `BREVO_API_KEY`, and `DEFAULT_FROM_EMAIL` on the API service in
+Render. When `BREVO_API_KEY` is configured, order alerts, customer confirmations, and account
+verification emails use Brevo's HTTPS transactional-email API, avoiding SMTP connectivity
+restrictions. `DEFAULT_FROM_EMAIL` must be a sender verified in Brevo; use a valid mailbox, for
+example `Petals Paradise <orders@your-verified-domain>`. The same `BREVO_API_KEY` also enables
+catalogue sync.
+
+Without a Brevo API key, email falls back to Django SMTP using `EMAIL_HOST`, `EMAIL_PORT`,
+`EMAIL_USE_TLS`, `EMAIL_HOST_USER`, and `EMAIL_HOST_PASSWORD`. That fallback can be used locally
+or with a host that permits outbound SMTP. To test the Brevo API locally, configure the three
+Brevo variables and run:
 
 ```powershell
-python manage.py shell -c "from django.core.mail import send_mail; send_mail('Test', 'Hello', None, ['you@example.com'])"
+python manage.py shell -c "from apps.core.email import send_transactional_email; send_transactional_email('Test', 'Hello', None, ['you@example.com'])"
 ```
 
 ## Deploy on Render

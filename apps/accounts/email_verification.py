@@ -1,13 +1,14 @@
 import logging
 import smtplib
 
+import requests
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core import signing
-from django.core.mail import send_mail
 from rest_framework import status
 
 from apps.core.exceptions import ApiError
+from apps.core.email import EmailDeliveryError, send_transactional_email
 
 TOKEN_SALT = "accounts.email-verification"
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ def send_verification_email(user):
         f"{settings.FRONTEND_URL.rstrip('/')}/#/verify-email?token={token}"
     )
     try:
-        sent = send_mail(
+        sent = send_transactional_email(
             subject="Verify your Petals Paradise email",
             message=(
                 f"Hello {user.name},\n\n"
@@ -35,9 +36,8 @@ def send_verification_email(user):
             ),
             from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[user.email],
-            fail_silently=False,
         )
-    except (OSError, smtplib.SMTPException, ValueError) as exc:
+    except (EmailDeliveryError, OSError, requests.RequestException, smtplib.SMTPException, ValueError) as exc:
         logger.exception("Could not send email verification to user %s", user.pk)
         raise ApiError(
             "EMAIL_DELIVERY_FAILED",

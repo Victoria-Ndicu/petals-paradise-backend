@@ -35,7 +35,7 @@ class OrderNotificationTests(BaseTest):
 
     @override_settings(ORDER_ALERT_EMAILS=["staff1@example.test", "staff2@example.test"])
     def test_sends_separate_admin_and_customer_emails(self):
-        with patch("apps.orders.notifications.send_mail") as send_mail:
+        with patch("apps.orders.notifications.send_transactional_email") as send_email:
             _send_alerts(
                 ["staff1@example.test", "staff2@example.test"],
                 "jane@example.com",
@@ -44,14 +44,17 @@ class OrderNotificationTests(BaseTest):
                 "Customer order confirmation",
             )
 
-        self.assertEqual(send_mail.call_count, 2)
-        self.assertEqual(send_mail.call_args_list[0].args[1], "Admin order details")
-        self.assertEqual(send_mail.call_args_list[0].args[3], ["staff1@example.test", "staff2@example.test"])
-        self.assertEqual(send_mail.call_args_list[1].args[0], "We received your order PP-TEST")
-        self.assertEqual(send_mail.call_args_list[1].args[3], ["jane@example.com"])
-        self.assertEqual(send_mail.call_args_list[1].args[1], "Customer order confirmation")
+        self.assertEqual(send_email.call_count, 2)
+        self.assertEqual(send_email.call_args_list[0].args[1], "Admin order details")
+        self.assertEqual(send_email.call_args_list[0].args[3], ["staff1@example.test", "staff2@example.test"])
+        self.assertEqual(send_email.call_args_list[1].args[0], "We received your order PP-TEST")
+        self.assertEqual(send_email.call_args_list[1].args[3], ["jane@example.com"])
+        self.assertEqual(send_email.call_args_list[1].args[1], "Customer order confirmation")
 
     def test_email_failure_is_logged_and_does_not_raise(self):
-        with patch("apps.orders.notifications.send_mail", side_effect=RuntimeError("SMTP unavailable")):
+        with patch(
+            "apps.orders.notifications.send_transactional_email",
+            side_effect=RuntimeError("email API unavailable"),
+        ):
             with self.assertLogs("apps.orders.notifications", level="ERROR"):
                 _send_alerts(["staff@example.test"], "jane@example.com", "PP-TEST", "Admin", "Customer")

@@ -79,6 +79,7 @@ services:
         sync: false
       - key: STORAGE_REGION
         value: us-east-2
+      # Enables catalogue sync and transactional email over HTTPS.
       - key: BREVO_API_KEY
         sync: false
       - key: SITE_URL

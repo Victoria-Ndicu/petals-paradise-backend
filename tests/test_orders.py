@@ -92,6 +92,14 @@ class OrderCreationTests(BaseTest):
         self.assertEqual(a.data["id"], b.data["id"])
         self.assertEqual(Order.objects.count(), 1)
 
+    def test_same_customer_can_create_identical_orders_with_new_idempotency_keys(self):
+        first = self.place_order(key="same-order-details-001")
+        second = self.place_order(key="same-order-details-002")
+
+        self.assertEqual((first.status_code, second.status_code), (201, 201))
+        self.assertNotEqual(first.data["id"], second.data["id"])
+        self.assertEqual(Order.objects.filter(customer=self.customer).count(), 2)
+
     def test_same_key_different_cart_conflicts(self):
         key = idem()
         self.place_order(key=key)

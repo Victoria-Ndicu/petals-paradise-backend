@@ -2,7 +2,8 @@ import logging
 import threading
 
 from django.conf import settings
-from django.core.mail import send_mail
+
+from apps.core.email import send_transactional_email
 
 from .models import Order
 
@@ -55,20 +56,25 @@ def _format_customer_order(order: Order) -> str:
 
 def _send_email(recipient: str, subject: str, body: str, *, alert_type: str) -> None:
     try:
-        send_mail(subject, body, None, [recipient], fail_silently=False)
+        send_transactional_email(subject, body, None, [recipient])
     except Exception:
         logger.exception("%s email failed", alert_type)
 
 
-def _send_alerts(admin_recipients: list[str], customer_email: str, order_reference: str, admin_body: str, customer_body: str) -> None:
+def _send_alerts(
+    admin_recipients: list[str],
+    customer_email: str,
+    order_reference: str,
+    admin_body: str,
+    customer_body: str,
+) -> None:
     if admin_recipients:
         try:
-            send_mail(
+            send_transactional_email(
                 f"New order {order_reference}",
                 admin_body,
                 None,
                 admin_recipients,
-                fail_silently=False,
             )
         except Exception:
             logger.exception("Order alert email failed for order %s", order_reference)
