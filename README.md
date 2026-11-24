@@ -37,7 +37,7 @@ python manage.py runserver
 Do not use these values in production; production requires a configured
 `SECRET_KEY` and persistent `DATABASE_URL`.
 
-### Neon, R2, CDN, and Brevo catalogue setup
+### Neon, Buckets, CDN, and Brevo catalogue setup
 
 - For Neon, configure `DATABASE_URL` with the pooled connection string for app traffic.
   Keep `conn_health_checks`, disable server-side cursors, and use the direct connection string
@@ -53,11 +53,21 @@ Do not use these values in production; production requires a configured
   its bucket path if Neon requires it.
   Apply the image field migration with `python manage.py migrate` (it runs automatically in the
   Render build).
+- To use an image already uploaded directly to a Neon Bucket, copy its public URL and paste it
+  into the product's **Image url** field in Django admin. The URL is `https://` plus
+  `STORAGE_PUBLIC_BASE` plus the object's key, for example
+  `https://branch.storage.c-2.us-east-2.aws.neon.tech/flowers/peony.jpg`. Leave the **Image**
+  upload field empty; uploaded files take precedence if both image fields are set. Add **Image
+  alt** text for accessibility.
+- Create an active category before creating a product. Add the name, description, image URL,
+  image alt text, and stock policy; add one or more active price variants in the inline variant
+  table (prices are whole KES). Save as **Draft**, then select the product in the product list
+  and choose **Publish selected products**. Only published products appear in the public API;
+  publishing also triggers the product's Brevo sync after the database transaction commits.
 - Public product and delivery-option responses include `Cache-Control` headers for short-lived
-  CDN caching. Cloudflare does not cache JSON by default: add Cache Rules for `/api/v1/products*`
-  and `/api/v1/delivery-options`, make them eligible for cache, and respect origin cache headers.
-  Product availability may be cached for up to 60 seconds; checkout still validates stock and
-  prices against the database.
+  CDN caching. If you use a CDN, configure it to respect these origin headers and cache
+  `/api/v1/products*` and `/api/v1/delivery-options`. Product availability may be cached for up
+  to 60 seconds; checkout still validates stock and prices against the database.
 - Set `BREVO_API_KEY` and `SITE_URL` to enable one-way product sync after catalogue saves and
   publish/unpublish/retire actions. Sync failures are logged and do not block admin saves. Existing
 products are not automatically backfilled. Run this once from `python manage.py shell` to sync
@@ -69,6 +79,25 @@ from apps.catalogue.models import Product
 
 for product in Product.objects.filter(status=Product.Status.PUBLISHED).iterator():
     sync_product(product)
+```
+
+### New-order alerts
+
+The backend sends email after a new order transaction commits. Admins receive an order alert at
+the comma-separated recipients in `ORDER_ALERT_EMAILS`. Customers receive a separate confirmation
+at the email on their account, when one is set. The customer message says the order was received
+and is awaiting payment confirmation; it does not claim that payment was received. Messages are
+sent in a background thread so email delivery does not hold up checkout. An idempotent retry does
+not send duplicate messages.
+
+Configure `ORDER_ALERT_EMAILS` and the existing SMTP settings (`EMAIL_HOST`, `EMAIL_PORT`,
+`EMAIL_USE_TLS`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, and `DEFAULT_FROM_EMAIL`) on the API
+service in Render. For Brevo SMTP, use the host, login, and SMTP key shown in your Brevo SMTP
+settings, and verify the sender address. Gmail testing requires an app password, not the account
+password. To test SMTP locally, set the same environment variables and run:
+
+```powershell
+python manage.py shell -c "from django.core.mail import send_mail; send_mail('Test', 'Hello', None, ['you@example.com'])"
 ```
 
 ## Deploy on Render

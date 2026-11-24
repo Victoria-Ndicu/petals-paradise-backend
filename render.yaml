@@ -63,6 +63,9 @@ services:
         value: "true"
       - key: DEFAULT_FROM_EMAIL
         sync: false
+      # Optional admin order-alert recipients; customer confirmations use the account email.
+      - key: ORDER_ALERT_EMAILS
+        sync: false
       # Neon Buckets image storage is required in production; Brevo sync is optional.
       - key: STORAGE_BUCKET
         sync: false
@@ -76,7 +79,6 @@ services:
         sync: false
       - key: STORAGE_REGION
         value: us-east-2
-        sync: false
       - key: BREVO_API_KEY
         sync: false
       - key: SITE_URL

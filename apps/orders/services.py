@@ -17,6 +17,7 @@ from apps.core.exceptions import ApiError
 from apps.core.models import Notification, enqueue_notification, record_audit
 
 from .models import Order, OrderItem, OrderStatusEvent
+from .notifications import notify_new_order
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +208,7 @@ def create_order(*, customer, data: dict, idempotency_key: str) -> tuple[Order, 
     try:
         with transaction.atomic():
             order = _build_order(customer, data, area, slot, idempotency_key, fp)
+            transaction.on_commit(lambda order=order: notify_new_order(order))
         return order, True
     except IntegrityError:
         # Two identical requests raced; the unique constraint kept only one.

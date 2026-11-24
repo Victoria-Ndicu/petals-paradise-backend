@@ -1,5 +1,7 @@
 from datetime import date, timedelta
 
+from unittest.mock import patch
+
 from apps.accounts.models import User
 from apps.catalogue.models import BlockedDate, ProductVariant
 from django.utils import timezone
@@ -12,6 +14,21 @@ from .base import BaseTest, idem
 
 
 class OrderCreationTests(BaseTest):
+    @patch("apps.orders.services.notify_new_order")
+    def test_new_order_alert_is_scheduled_after_commit_once(self, notify_new_order):
+        key = idem()
+        with self.captureOnCommitCallbacks(execute=True) as callbacks:
+            first = self.place_order(key=key)
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(len(callbacks), 1)
+        notify_new_order.assert_called_once()
+
+        with self.captureOnCommitCallbacks(execute=True) as replay_callbacks:
+            replay = self.place_order(key=key)
+        self.assertEqual(replay.status_code, 200)
+        self.assertEqual(replay_callbacks, [])
+        notify_new_order.assert_called_once()
+
     def test_server_calculates_totals_and_ignores_client_money(self):
         r = self.place_order(
             items=[
